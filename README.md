@@ -6,3 +6,5 @@
   사용자 브라우저에 Service Worker가 캐싱해둔 옛 코드가 계속 서빙될 수 있다.
   (`CONTENT_CACHE`는 교재 PDF/오프라인 저장본용이라 별도 버전으로 관리하며, 앱 셸
   배포와 무관하게 그대로 둔다.)
+- Cloudflare KV/R2에서 삭제 명령을 쓰거나 KV TTL 정책을 확인/변경할 때는
+  [OPERATIONS.md](./OPERATIONS.md)를 먼저 볼 것.

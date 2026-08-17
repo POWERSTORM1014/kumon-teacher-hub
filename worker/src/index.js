@@ -35,6 +35,7 @@ function isValidDevice(d) {
 }
 
 const LOCK_TTL_MS = 5 * 60 * 1000; // 5분 — 이 시간이 지난 잠금은 만료된 것으로 간주
+const LOCK_TTL_SEC = LOCK_TTL_MS / 1000; // KV expirationTtl은 초 단위(최소 60초)
 
 function safeExt(filename, mime) {
   const m = /\.([a-zA-Z0-9]{1,5})$/.exec(filename || '');
@@ -168,7 +169,11 @@ export default {
 
         if (expired || existing.device === device) {
           const payload = { device, timestamp: now };
-          await env.KUMON_LAYERS.put(lockKey, JSON.stringify(payload));
+          // KV 자체 TTL도 걸어둔다 — 애플리케이션 로직(now - timestamp > LOCK_TTL_MS)이
+          // 이미 5분 지난 잠금을 "만료"로 취급하긴 하지만, 그것만으로는 KV에서 키 자체가
+          // 지워지지 않는다(탭이 비정상 종료돼 release가 한 번도 안 온 lock: 키가 영원히
+          // 쌓임). expirationTtl로 KV가 알아서 정리하게 해서 죽은 잠금 키가 누적되지 않게 한다.
+          await env.KUMON_LAYERS.put(lockKey, JSON.stringify(payload), { expirationTtl: LOCK_TTL_SEC });
           return json({ ok: true, device, timestamp: now }, 200, origin);
         }
         return json({ locked: true, device: existing.device, timestamp: existing.timestamp }, 409, origin);
@@ -215,7 +220,7 @@ export default {
 
           if (expired || mine || force) {
             const payload = { device, timestamp: now };
-            await env.KUMON_LAYERS.put(lockKey, JSON.stringify(payload));
+            await env.KUMON_LAYERS.put(lockKey, JSON.stringify(payload), { expirationTtl: LOCK_TTL_SEC });
             return json({ ok: true, device, timestamp: now }, 200, origin);
           }
           return json({ locked: true, device: existing.device, timestamp: existing.timestamp }, 409, origin);
