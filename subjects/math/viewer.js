@@ -1354,7 +1354,7 @@ async function initSubjectSwitcher() {
     sel.innerHTML = subjects.map(s => `<option value="${s.viewer}" ${s.id === CURRENT_SUBJECT_ID ? 'selected' : ''}>${s.icon} ${s.name}</option>`).join('');
   } catch (e) { }
 }
-function onSubjectSwitch(viewerPath) { if (viewerPath) location.href = '/' + viewerPath; }
+function onSubjectSwitch(viewerPath) { if (viewerPath) location.href = '../../' + viewerPath; }
 
 /* ══ 토스트 ═══════════════════════════════════════════════ */
 function showToast(msg) {
