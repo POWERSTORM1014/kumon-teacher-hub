@@ -1125,10 +1125,11 @@
       if (!liveC) return;
       const ctx = liveC.getContext('2d');
       ctx.clearRect(0, 0, liveC.width, liveC.height);
-      if (!groupSel || groupSel.pos !== pos || !groupSel.ids.size) { removeSelectionToolbar(); return; }
+      if (!groupSel || groupSel.pos !== pos || !groupSel.ids.size) { removeSelectionToolbar(pos); return; }
       const scale = mounted[pos] ? mounted[pos].scale : 1;
       const b = selectionBounds(pos, groupSel.layerId, groupSel.ids);
-      if (!b) { removeSelectionToolbar(); return; }
+      console.log('[sel-toolbar-debug] drawSelectionOverlay', { pos, scale, b, groupSelIds: Array.from(groupSel.ids) }); // TODO(임시): 버튼 미표시 진단용, 원인 확인 후 제거
+      if (!b) { removeSelectionToolbar(pos); return; }
       ctx.save();
       ctx.strokeStyle = 'rgba(232,64,28,0.9)';
       ctx.setLineDash([6, 4]);
@@ -1139,15 +1140,23 @@
     }
     // 선택된 블록 위에 뜨는 삭제(휴지통) 버튼 — el-layer(elwrap-<pos>)가 이미 캔버스와
     // 1:1로 맞춰진 절대좌표 오버레이 컨테이너이므로, 텍스트/이미지 노드와 같은 좌표계를
-    // 그대로 재사용해 DOM 버튼을 얹는다. 페이지당 하나만 존재할 수 있으므로(groupSel이
-    // 전역에 하나) 매번 기존 걸 지우고 다시 만든다.
-    function removeSelectionToolbar() {
-      const old = document.querySelector('.sel-toolbar');
-      if (old) old.remove();
+    // 그대로 재사용해 DOM 버튼을 얹는다. pos를 지정하면 그 페이지의 elwrap 안에서만
+    // 찾아 지운다(더블 스프레드 레이아웃처럼 페이지 여러 개가 동시에 마운트/redraw될 때,
+    // 다른 페이지의 redrawPage가 전역 querySelector로 이 페이지의 방금 만든 버튼을
+    // 지워버리던 버그 수정 — pos 없이 부르면 전체 정리용으로만 쓴다).
+    function removeSelectionToolbar(pos) {
+      if (pos !== undefined) {
+        const wrap = document.getElementById('elwrap-' + pos);
+        const old = wrap ? wrap.querySelector('.sel-toolbar') : null;
+        if (old) old.remove();
+      } else {
+        document.querySelectorAll('.sel-toolbar').forEach(el => el.remove());
+      }
     }
     function showSelectionToolbar(pos, b, scale) {
-      removeSelectionToolbar();
+      removeSelectionToolbar(pos);
       const wrap = document.getElementById('elwrap-' + pos);
+      console.log('[sel-toolbar-debug] showSelectionToolbar', { pos, wrapFound: !!wrap, left: b.minX * scale - 5, top: Math.max(0, b.minY * scale - 5 - 38) }); // TODO(임시): 진단용, 원인 확인 후 제거
       if (!wrap) return;
       const toolbar = document.createElement('div');
       toolbar.className = 'sel-toolbar';
@@ -1162,6 +1171,7 @@
       btn.addEventListener('click', () => deleteSelectedGroup());
       toolbar.appendChild(btn);
       wrap.appendChild(toolbar);
+      console.log('[sel-toolbar-debug] toolbar appended', { childCount: wrap.children.length, computedDisplay: getComputedStyle(toolbar).display, computedPointerEvents: getComputedStyle(toolbar).pointerEvents, rect: toolbar.getBoundingClientRect() }); // TODO(임시): 진단용, 원인 확인 후 제거
     }
     function clearSelection() {
       const pos = groupSel ? groupSel.pos : null;
@@ -1470,7 +1480,7 @@
       const origPtsById = new Map(strokes.map(s => [s.id, s.pts.map(pt => ({ x: pt.x, y: pt.y }))]));
       groupDrag = { pos, layerId, ids: new Set(ids), origPtsById, startX: p.x, startY: p.y, pointerId, moved: false, dx: 0, dy: 0 };
       canvas.setPointerCapture(pointerId);
-      removeSelectionToolbar(); // 드래그 중엔 위치가 안 맞으니 숨기고, endGroupDrag의 redrawPage가 다시 띄운다
+      removeSelectionToolbar(pos); // 드래그 중엔 위치가 안 맞으니 숨기고, endGroupDrag의 redrawPage가 다시 띄운다
     }
     function drawMarqueeOverlay(pos) {
       const liveC = document.getElementById('ink-live-' + pos);
