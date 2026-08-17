@@ -41,6 +41,7 @@
     if (h === 'localhost' || h === '127.0.0.1') return SITE_ROOT + 'api/';
     return WORKERS_API_URL;
   })();
+  console.log('[kumon] API_BASE_URL =', API_BASE_URL);
 
   /* ══════════════════════════════════════════════════════════
      0. 공통 유틸
