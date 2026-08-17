@@ -19,9 +19,16 @@
 // 전체 저장(precacheAll)은 Range 헤더 없는 요청으로 파일 전체를 받아 캐싱하므로 이
 // 예외와 무관하게 계속 정상 동작한다.
 
-const SW_VERSION = 'v1';
+// 앱 셸(index.html/JS 등) 코드를 바꿀 때마다 이 번호를 올릴 것 — activate에서
+// SHELL_CACHE/CONTENT_CACHE가 아닌 캐시를 전부 지우므로, 번호를 올리면 옛 SHELL_CACHE가
+// 자동으로 삭제되고 새 코드가 다시 캐싱된다. 번호를 안 올리면 배포해도 사용자 브라우저에
+// 옛 코드가 계속 남을 수 있다.
+const SW_VERSION = 'v2';
 const SHELL_CACHE = 'kth-shell-' + SW_VERSION;
-const CONTENT_CACHE = 'kth-content-v1'; // 각 뷰어의 CACHE_NAME과 반드시 동일해야 함
+// CONTENT_CACHE는 SW_VERSION과 별개로 관리한다 — 교재 PDF/오프라인 저장본이 들어있어서,
+// 앱 셸 코드만 바뀐 배포마다 같이 버전을 올리면 사용자가 이미 받아둔 대용량 PDF까지
+// 매번 다시 받아야 한다. 각 뷰어의 CACHE_NAME 상수와 반드시 동일한 문자열을 유지할 것.
+const CONTENT_CACHE = 'kth-content-v1';
 
 // sw.js 자신은 항상 저장소 루트에 있으므로(로컬이든 GitHub Pages 하위 경로든), 여기서
 // './'로 시작하는 상대경로는 이 스크립트 자신의 위치(=사이트 루트) 기준으로 풀리며
