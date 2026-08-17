@@ -1,0 +1,14 @@
+name = "kumon-teacher-hub-api"
+main = "src/index.js"
+compatibility_date = "2025-01-01"
+
+[[kv_namespaces]]
+binding = "KUMON_LAYERS"
+id = "fa4394da14a24a36be9fff36e82f5d3e"
+
+[[r2_buckets]]
+binding = "LESSON_NOTES"
+bucket_name = "kumon-lesson-notes"
+
+[vars]
+LESSON_NOTES_PUBLIC_URL = "https://pub-35dc47c3443b43c1bdb23c524c0d9a0e.r2.dev"

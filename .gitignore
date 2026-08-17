@@ -18,3 +18,7 @@ npm-debug.log*
 
 # Claude Code 세션 메타데이터
 .claude/
+
+# wrangler 로컬 빌드/캐시 산출물 (Worker 소스/설정은 worker/ 아래 커밋 대상)
+worker/.wrangler/
+worker/node_modules/
