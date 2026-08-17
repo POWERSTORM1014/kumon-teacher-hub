@@ -1497,7 +1497,9 @@ function toggleDark() { darkMode = !darkMode; document.body.classList.toggle('da
 
 /* ══ 키보드 단축키 ════════════════════════════════════════ */
 document.addEventListener('keydown', e => {
-  if (e.target.tagName === 'INPUT' || e.target.tagName === 'TEXTAREA') return;
+  // INPUT/TEXTAREA/SELECT/contenteditable 등 다른 입력 필드에 포커스가 있을 때는
+  // 아래 어떤 단축키도(특히 Delete/Backspace로 블록 선택 삭제) 오작동하면 안 된다.
+  if (['INPUT', 'TEXTAREA', 'SELECT'].includes(e.target.tagName) || e.target.isContentEditable) return;
   if ((e.ctrlKey || e.metaKey) && e.key === 'f') { e.preventDefault(); togglePdfSearch(); return; }
   if (!pdfDoc) return;
   if (e.key === 'ArrowRight' || e.key === 'ArrowDown') goToPage(curPage + 1);
@@ -1507,7 +1509,10 @@ document.addEventListener('keydown', e => {
   if ((e.ctrlKey || e.metaKey) && (e.key === 'y' || (e.shiftKey && e.key === 'Z'))) { e.preventDefault(); doRedo(); }
   if (Engine.Tools.getTool() === 'select') {
     if (e.key === 'Delete' || e.key === 'Backspace') {
-      if (Engine.Page.deleteSelectedGroup()) { e.preventDefault(); showToast('선택한 필기를 삭제했어요'); }
+      // 토스트는 여기서 직접 띄우지 않는다 — deleteSelectedGroup()이 쏘는
+      // kumon:structure-changed(reason:'groupDelete')를 handleStructureChanged가
+      // 구독해서 띄우므로, 플로팅 툴바의 삭제 버튼과 완전히 같은 경로로 통일된다.
+      if (Engine.Page.deleteSelectedGroup()) e.preventDefault();
     } else if (e.key === 'Escape') {
       Engine.Page.clearSelection();
     }
@@ -1543,13 +1548,18 @@ document.addEventListener('DOMContentLoaded', () => {
 // curPage/totalPg를 먼저 손댄 호출부 코드 다음에 이 신호가 오므로, setTimeout(0)으로
 // 한 틱 미뤄서 항상 최신 curPage 기준으로 다시 그리게 한다.
 function handleStructureChanged(e) {
-  const { scope, pageRebuild, totalPages } = e.detail;
+  const { scope, pageRebuild, totalPages, reason, count } = e.detail;
   setTimeout(() => {
     document.querySelectorAll('.pen-toolbar .pt-tool').forEach(b => { b.disabled = Engine.Events.isLocked(); });
     if (scope === 'pageOrder' && e.detail.locked) {
       if (totalPages) totalPg = totalPages;
       if (pageRebuild === 'full') { buildThumbs(); renderPages(); updatePageInfo(); }
       else if (pageRebuild === 'thumbs') { buildThumbs(); }
+    }
+    // 블록 선택 삭제(플로팅 툴바 🗑 버튼 / Delete·Backspace 키 공통 경로)의 유일한
+    // 피드백 지점 — 신호가 두 번(locked:true→false) 오므로 첫 번째에서만 띄운다.
+    if (scope === 'layers' && reason === 'groupDelete' && e.detail.locked) {
+      showToast('선택한 필기 ' + count + '개를 삭제했어요');
     }
     if (document.getElementById('layer-panel').classList.contains('open')) renderLayerPanel();
   }, 0);

@@ -1125,30 +1125,63 @@
       if (!liveC) return;
       const ctx = liveC.getContext('2d');
       ctx.clearRect(0, 0, liveC.width, liveC.height);
-      if (!groupSel || groupSel.pos !== pos || !groupSel.ids.size) return;
+      if (!groupSel || groupSel.pos !== pos || !groupSel.ids.size) { removeSelectionToolbar(); return; }
       const scale = mounted[pos] ? mounted[pos].scale : 1;
       const b = selectionBounds(pos, groupSel.layerId, groupSel.ids);
-      if (!b) return;
+      if (!b) { removeSelectionToolbar(); return; }
       ctx.save();
       ctx.strokeStyle = 'rgba(232,64,28,0.9)';
       ctx.setLineDash([6, 4]);
       ctx.lineWidth = 1.5;
       ctx.strokeRect(b.minX * scale - 5, b.minY * scale - 5, (b.maxX - b.minX) * scale + 10, (b.maxY - b.minY) * scale + 10);
       ctx.restore();
+      showSelectionToolbar(pos, b, scale);
+    }
+    // 선택된 블록 위에 뜨는 삭제(휴지통) 버튼 — el-layer(elwrap-<pos>)가 이미 캔버스와
+    // 1:1로 맞춰진 절대좌표 오버레이 컨테이너이므로, 텍스트/이미지 노드와 같은 좌표계를
+    // 그대로 재사용해 DOM 버튼을 얹는다. 페이지당 하나만 존재할 수 있으므로(groupSel이
+    // 전역에 하나) 매번 기존 걸 지우고 다시 만든다.
+    function removeSelectionToolbar() {
+      const old = document.querySelector('.sel-toolbar');
+      if (old) old.remove();
+    }
+    function showSelectionToolbar(pos, b, scale) {
+      removeSelectionToolbar();
+      const wrap = document.getElementById('elwrap-' + pos);
+      if (!wrap) return;
+      const toolbar = document.createElement('div');
+      toolbar.className = 'sel-toolbar';
+      toolbar.style.left = (b.minX * scale - 5) + 'px';
+      toolbar.style.top = Math.max(0, b.minY * scale - 5 - 38) + 'px';
+      const btn = document.createElement('button');
+      btn.type = 'button';
+      btn.className = 'sel-toolbar-btn';
+      btn.title = '선택한 필기 삭제';
+      btn.textContent = '🗑';
+      btn.addEventListener('pointerdown', e => e.stopPropagation()); // 캔버스 마퀴/드래그로 이벤트가 새지 않게
+      btn.addEventListener('click', () => deleteSelectedGroup());
+      toolbar.appendChild(btn);
+      wrap.appendChild(toolbar);
     }
     function clearSelection() {
       const pos = groupSel ? groupSel.pos : null;
       groupSel = null;
-      if (pos !== null) redrawPage(pos);
+      if (pos !== null) redrawPage(pos); else removeSelectionToolbar();
     }
     function getSelection() { return groupSel ? { pos: groupSel.pos, layerId: groupSel.layerId, ids: Array.from(groupSel.ids) } : null; }
-    // 블록 선택된 획을 전부 지운다 — 하나의 undo 단위로 기록된다(Elements.deleteElements).
+    // 블록 선택된 획을 전부 지운다 — 하나의 undo 단위로 기록된다(Elements.deleteElements,
+    // 그 안에서 이미 saveLayer까지 처리됨). 레이어 패널 등 구독자가 갱신되도록
+    // kumon:structure-changed도 함께 쏜다(reason:'groupDelete'는 뷰어가 토스트를
+    // 띄우는 용도로만 구분해서 씀 — addLayer/renameLayer 등 기존 layers-scope 신호와
+    // 섞이지 않게).
     function deleteSelectedGroup() {
       if (!groupSel || !groupSel.ids.size) return false;
       const { pos, layerId, ids } = groupSel;
+      const count = ids.size;
       Elements.deleteElements(pos, layerId, Array.from(ids));
       groupSel = null;
       redrawPage(pos);
+      Events.emitStructureChanged({ scope: 'layers', pos, reason: 'groupDelete', count });
       return true;
     }
 
@@ -1437,6 +1470,7 @@
       const origPtsById = new Map(strokes.map(s => [s.id, s.pts.map(pt => ({ x: pt.x, y: pt.y }))]));
       groupDrag = { pos, layerId, ids: new Set(ids), origPtsById, startX: p.x, startY: p.y, pointerId, moved: false, dx: 0, dy: 0 };
       canvas.setPointerCapture(pointerId);
+      removeSelectionToolbar(); // 드래그 중엔 위치가 안 맞으니 숨기고, endGroupDrag의 redrawPage가 다시 띄운다
     }
     function drawMarqueeOverlay(pos) {
       const liveC = document.getElementById('ink-live-' + pos);
