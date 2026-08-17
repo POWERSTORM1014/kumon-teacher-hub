@@ -277,11 +277,64 @@
       try { return JSON.parse(localStorage.getItem(RECENTS_KEY) || '[]'); } catch (e) { return []; }
     }
 
+    // ── 편집 잠금(동시 편집 방지) — saveLayer/loadLayer와 같은 패턴의 단발성 fetch
+    // 래퍼. 언제 호출할지(필기 도구 처음 사용 시점, heartbeat 간격, 페이지/과목 이탈
+    // 시점)는 뷰어 쪽 책임이고, 여기서는 그 요청 자체와 응답 해석만 담당한다.
+    function lockUrl(bookId, page) {
+      return API_BASE_URL + 'lock/' + encodeURIComponent(bookId) + '/' + encodeURIComponent(page);
+    }
+    async function acquireLock(bookId, page, device, force) {
+      try {
+        const res = await fetch(lockUrl(bookId, page), {
+          method: 'POST', headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ device, force: !!force })
+        });
+        const j = await res.json().catch(() => ({}));
+        return Object.assign({ ok: res.ok, status: res.status }, j);
+      } catch (e) { return { ok: false, status: 0, offline: true }; }
+    }
+    async function releaseLock(bookId, page, device) {
+      try {
+        const res = await fetch(lockUrl(bookId, page), {
+          method: 'DELETE', headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ device })
+        });
+        const j = await res.json().catch(() => ({}));
+        return Object.assign({ ok: res.ok }, j);
+      } catch (e) { return { ok: false }; }
+    }
+    // beforeunload/pagehide 시점에는 일반 fetch가 브라우저에 의해 중간에 끊길 수 있어
+    // navigator.sendBeacon()을 써야 한다 — 다만 sendBeacon은 항상 POST만 보낼 수 있으므로
+    // (DELETE 불가), 잠금 라우트가 body.release===true를 DELETE와 동일하게 처리하도록
+    // 서버/Worker 쪽에 맞춰뒀다.
+    function releaseLockBeacon(bookId, page, device) {
+      if (!('sendBeacon' in navigator)) { releaseLock(bookId, page, device); return; }
+      const blob = new Blob([JSON.stringify({ device, release: true })], { type: 'application/json' });
+      navigator.sendBeacon(lockUrl(bookId, page), blob);
+    }
+    async function sendHeartbeat(bookId, page, device) {
+      try {
+        const res = await fetch(lockUrl(bookId, page) + '/heartbeat', {
+          method: 'POST', headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ device })
+        });
+        const j = await res.json().catch(() => ({}));
+        return Object.assign({ ok: res.ok, status: res.status }, j);
+      } catch (e) { return { ok: false, status: 0, offline: true }; }
+    }
+    async function getLockStatus(bookId, page) {
+      try {
+        const res = await fetch(lockUrl(bookId, page), { cache: 'no-store' });
+        return await res.json();
+      } catch (e) { return { locked: false, offline: true }; }
+    }
+
     return {
       loadLayer, saveLayer, removeLayer, setLastSyncAt, pushLayerToServer, fetchRemoteLayer, uploadAsset,
       loadPageOrder, savePageOrder, fetchRemotePageOrder,
       ping, stashBackup, getBackups, restoreBackup, deleteBackup, removePageTraces,
       recordRecent, getRecents,
+      acquireLock, releaseLock, releaseLockBeacon, sendHeartbeat, getLockStatus,
       fullKey, normalizeAssetSrc
     };
   })();
@@ -379,7 +432,17 @@
     function on(handler) { target.addEventListener(STRUCTURE_CHANGED, handler); }
     function off(handler) { target.removeEventListener(STRUCTURE_CHANGED, handler); }
 
-    return { STRUCTURE_CHANGED, emitStructureChanged, isLocked, on, off };
+    // 편집 잠금(동시 편집 방지) 상태 변화 신호 — structure-changed와는 완전히 다른
+    // 개념(구조 재계산 타이밍 vs 다른 기기의 잠금 충돌)이라 별도 이벤트로 분리한다.
+    // 뷰어는 이 하나만 구독해서 경고 배너 표시/도구 비활성화를 처리하면 된다.
+    // detail.state: 'acquired'(내가 잠금 보유) | 'conflict'(다른 기기가 보유, 읽기전용
+    // 표시 필요) | 'released'(잠금 해제됨, 배너 숨김)
+    const LOCK_CHANGED = 'kumon:lock-changed';
+    function emitLockChanged(detail) { target.dispatchEvent(new CustomEvent(LOCK_CHANGED, { detail })); }
+    function onLockChanged(handler) { target.addEventListener(LOCK_CHANGED, handler); }
+    function offLockChanged(handler) { target.removeEventListener(LOCK_CHANGED, handler); }
+
+    return { STRUCTURE_CHANGED, emitStructureChanged, isLocked, on, off, LOCK_CHANGED, emitLockChanged, onLockChanged, offLockChanged };
   })();
 
   /* ══════════════════════════════════════════════════════════

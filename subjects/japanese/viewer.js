@@ -34,6 +34,118 @@ document.addEventListener('DOMContentLoaded', () => {
   }, true);
 });
 
+/* ══ 편집 잠금(동시 편집 방지) ════════════════════════════════
+   saveLayer()/loadLayer() 저장 로직 자체는 건드리지 않고, 그 위에 얹는 별도 계층.
+   필기 도구(pen-toolbar)를 처음 켤 때 현재 페이지를 잠그고, 30초마다 heartbeat로
+   갱신하다가, 페이지/교재/과목을 벗어나거나 탭을 닫을 때 해제한다. 다른 기기가 이미
+   잠근 페이지면 409가 오고, 이 기기는 읽기 전용으로 전환된다. */
+let lockedPage = null;      // 이 기기가 현재 보유한 잠금의 page id(없으면 null)
+let lockHeartbeatTimer = null;
+let lockReadOnly = false;   // 다른 기기가 잠가서 도구를 꺼둔 상태인지
+let lockConflictInfo = null; // { device, timestamp, page } — 경고 모달/배너용
+
+function currentLockPageId() {
+  if (!bookId || !totalPg) return null;
+  return Engine.PageOrder.pageIdOf(panelPage());
+}
+function minutesAgo(ts) {
+  const m = Math.max(0, Math.round((Date.now() - ts) / 60000));
+  return m <= 0 ? '방금' : (m + '분 전');
+}
+function stopLockHeartbeat() { if (lockHeartbeatTimer) { clearInterval(lockHeartbeatTimer); lockHeartbeatTimer = null; } }
+function startLockHeartbeat() {
+  stopLockHeartbeat();
+  lockHeartbeatTimer = setInterval(async () => {
+    if (!lockedPage || !bookId) return;
+    const page = lockedPage;
+    const r = await Engine.Storage.sendHeartbeat(bookId, page, Engine.Device.getLabel());
+    if (r.status === 409) {
+      lockedPage = null;
+      stopLockHeartbeat();
+      Engine.Events.emitLockChanged({ state: 'conflict', page, device: r.device, timestamp: r.timestamp });
+    }
+  }, 30000);
+}
+async function acquireLockForCurrentPage(force) {
+  const page = currentLockPageId();
+  if (!bookId || !page) return;
+  const device = Engine.Device.getLabel();
+  const r = await Engine.Storage.acquireLock(bookId, page, device, force);
+  if (r.ok) {
+    lockedPage = page;
+    startLockHeartbeat();
+    Engine.Events.emitLockChanged({ state: 'acquired', page, device });
+  } else if (r.status === 409) {
+    lockedPage = null;
+    stopLockHeartbeat();
+    Engine.Events.emitLockChanged({ state: 'conflict', page, device: r.device, timestamp: r.timestamp });
+  }
+  // 오프라인(status 0)이면 조용히 무시 — 로컬 저장은 계속 되고, 서버 잠금 체계 자체가
+  // 오프라인 상태에서는 의미가 없다.
+}
+function releaseCurrentLock() {
+  stopLockHeartbeat();
+  if (lockedPage && bookId) {
+    const page = lockedPage;
+    Engine.Storage.releaseLock(bookId, page, Engine.Device.getLabel()); // fire-and-forget
+    Engine.Events.emitLockChanged({ state: 'released', page });
+  }
+  lockedPage = null;
+}
+function releaseLockOnUnload() {
+  if (lockedPage && bookId) Engine.Storage.releaseLockBeacon(bookId, lockedPage, Engine.Device.getLabel());
+}
+window.addEventListener('beforeunload', releaseLockOnUnload);
+window.addEventListener('pagehide', releaseLockOnUnload);
+
+// 잠금 상태 변화 신호를 구독하는 곳은 여기 한 곳뿐이다 — acquire/heartbeat/release
+// 쪽 코드는 상태를 바꾸고 이벤트만 쏘면 되고, 배너/모달/도구 비활성화 같은 실제 화면
+// 반영은 전부 이 구독자가 담당한다(kumon:structure-changed와 같은 원칙).
+Engine.Events.onLockChanged(e => {
+  const d = e.detail;
+  if (d.state === 'conflict') { lockReadOnly = true; lockConflictInfo = { device: d.device, timestamp: d.timestamp, page: d.page }; }
+  else { lockReadOnly = false; lockConflictInfo = null; } // 'acquired' | 'released'
+  applyLockReadOnlyUI();
+  if (d.state === 'conflict') openLockConflictModal();
+});
+
+// 읽기 전용 상태를 실제 도구 비활성화로 반영 — 배너 표시 + 필기 모드 강제 종료.
+function applyLockReadOnlyUI() {
+  document.getElementById('lock-banner').classList.toggle('show', lockReadOnly);
+  if (lockReadOnly) {
+    if (Engine.Tools.isPenMode()) {
+      Engine.Tools.setPenMode(false);
+      document.getElementById('vt-pen').classList.remove('on');
+      document.getElementById('pen-toolbar').classList.remove('show');
+      Engine.Page.setPenModeClasses(false);
+    }
+    document.getElementById('vt-pen').disabled = true;
+    if (lockConflictInfo) {
+      document.getElementById('lock-banner-text').textContent =
+        '🔒 ' + lockConflictInfo.device + '에서 편집 중 (마지막 활동: ' + minutesAgo(lockConflictInfo.timestamp) + ') — 보기 전용';
+    }
+  } else {
+    document.getElementById('vt-pen').disabled = false;
+  }
+}
+function openLockConflictModal() {
+  if (!lockConflictInfo) return;
+  document.getElementById('lock-conflict-text').innerHTML =
+    '<b>' + lockConflictInfo.device + '</b>에서 편집 중입니다.<br>(마지막 활동: ' + minutesAgo(lockConflictInfo.timestamp) + ')';
+  document.getElementById('lock-conflict-modal').classList.add('open');
+}
+function closeLockConflict() { document.getElementById('lock-conflict-modal').classList.remove('open'); }
+async function forceLockTakeover() {
+  if (!lockConflictInfo) { closeLockConflict(); return; }
+  if (!confirm('정말 이어받으시겠어요? 상대 기기 작업이 저장되지 않았을 수 있습니다.')) return;
+  closeLockConflict();
+  document.getElementById('vt-pen').disabled = false;
+  await acquireLockForCurrentPage(true);
+  // 이어받기에 성공했으면 바로 필기 모드를 켜준다 — 방금 acquireLockForCurrentPage가 이미
+  // 잠금을 확보했으므로 skipLock=true로 불러 중복 acquire 요청을 보내지 않는다.
+  if (!lockReadOnly && !Engine.Tools.isPenMode()) togglePen(true);
+}
+
 function pageLabel(pos) {
   const entry = Engine.PageOrder.getOrderEntry(pos);
   if (entry && entry.kind === 'inserted') return entry.label || '새 페이지';
@@ -130,6 +242,7 @@ function processUpload(file) {
 function delMyFile(id) { saveMyFiles(getMyFiles().filter(f => f.id !== id)); renderMyFiles(); showToast('삭제 완료'); }
 async function openMyFile(id) {
   const f = getMyFiles().find(x => x.id === id); if (!f) return;
+  releaseCurrentLock(); // 이전에 열려 있던 교재의 페이지 잠금을 해제하고 새 교재를 연다
   currentMaterial = null; currentIsCustom = true; bookId = 'custom-' + f.id;
   showViewer();
   showBookLoadingOverlay();
@@ -200,6 +313,7 @@ function withTimeout(promise, ms, label) {
 }
 async function openMaterial(file) {
   const m = MATERIALS.find(x => x.file === file); if (!m) return;
+  releaseCurrentLock(); // 이전에 열려 있던 교재의 페이지 잠금을 해제하고 새 교재를 연다
   const url = Engine.pdfUrl(m.file); // R2 공개 URL — 로컬 pdf/ 폴더는 더 이상 참조하지 않음
   try {
     const cachedRes = ('caches' in window) ? await caches.match(url).catch(() => null) : null;
@@ -242,7 +356,7 @@ async function afterPdfLoaded(doc, label) {
   hideBookLoadingOverlay(); // 새 교재의 첫 페이지가 실제로 그려진 뒤에야 옛 화면 가림을 걷는다
 }
 function showViewer() { document.getElementById('material-screen').style.display = 'none'; document.getElementById('viewer-screen').classList.add('show'); }
-function backToMaterial() { document.getElementById('viewer-screen').classList.remove('show'); document.getElementById('material-screen').style.display = ''; renderList(); }
+function backToMaterial() { releaseCurrentLock(); document.getElementById('viewer-screen').classList.remove('show'); document.getElementById('material-screen').style.display = ''; renderList(); }
 // 뷰어 상단 단계 드롭다운 — 자료관리 화면과 완전히 같은 필터 select(ms-stage-filter)에
 // 값을 그대로 넣고 renderList()가 이미 하는 필터링 로직을 그대로 재사용한다.
 function onViewerStageFilterChange(val) {
@@ -516,7 +630,15 @@ function initSidebarResizer() {
   }
   resizer.addEventListener('pointerup', endDrag); resizer.addEventListener('pointercancel', endDrag);
 }
-function goToPage(p) { curPage = Math.max(1, Math.min(totalPg, p)); renderPages(); }
+function goToPage(p) {
+  curPage = Math.max(1, Math.min(totalPg, p)); renderPages();
+  // 필기 모드가 켜진 채로 다른 페이지로 넘어가면, 잠금도 새 페이지를 따라간다 —
+  // 이전 페이지 잠금은 풀고 새 페이지를 잠근다(둘 다 보유하면 다른 기기 편집을 과도하게 막음).
+  if (Engine.Tools.isPenMode()) {
+    const nextPage = currentLockPageId();
+    if (nextPage !== lockedPage) { releaseCurrentLock(); acquireLockForCurrentPage(false); }
+  }
+}
 function goToPdfPage(pdfNum) { goToPage(Engine.PageOrder.findPosByPdfPage(pdfNum)); }
 function initWheelPageNav() {
   // 필기 도구가 켜져 있어도 휠은 항상 페이지 이동으로 동작해야 한다 — 휠 스크롤은
@@ -534,13 +656,16 @@ function updatePageInfo() {
 }
 
 /* ══ 필기 툴바 ════════════════════════════════════════════ */
-function togglePen() {
+function togglePen(skipLock) {
   const on = !Engine.Tools.isPenMode();
   Engine.Tools.setPenMode(on);
   document.getElementById('vt-pen').classList.toggle('on', on);
   document.getElementById('pen-toolbar').classList.toggle('show', on);
   Engine.Page.setPenModeClasses(on);
   updateColorPanelVisibility();
+  // 필기 도구를 처음 켜는 시점에 현재 페이지 편집 잠금을 시도한다(skipLock은
+  // forceLockTakeover가 이미 잠금을 확보해둔 뒤 UI만 켤 때 중복 요청을 피하려고 씀).
+  if (!skipLock) { if (on) acquireLockForCurrentPage(false); else releaseCurrentLock(); }
 }
 function setTool(t) {
   const valid = ['pen', 'hi', 'er', 'select', 'text', 'media'];
@@ -1345,7 +1470,7 @@ async function manualPrecacheAll() {
 }
 
 /* ══ 과목 전환기 / 허브 이동 ══════════════════════════════ */
-function goHome() { location.href = '../../index.html'; }
+function goHome() { releaseCurrentLock(); location.href = '../../index.html'; }
 async function initSubjectSwitcher() {
   try {
     const res = await fetch('../../subjects.json', { cache: 'no-store' });
@@ -1354,7 +1479,7 @@ async function initSubjectSwitcher() {
     sel.innerHTML = subjects.map(s => `<option value="${s.viewer}" ${s.id === CURRENT_SUBJECT_ID ? 'selected' : ''}>${s.icon} ${s.name}</option>`).join('');
   } catch (e) { }
 }
-function onSubjectSwitch(viewerPath) { if (viewerPath) location.href = '../../' + viewerPath; }
+function onSubjectSwitch(viewerPath) { if (viewerPath) { releaseCurrentLock(); location.href = '../../' + viewerPath; } }
 
 /* ══ 토스트 ═══════════════════════════════════════════════ */
 function showToast(msg) {

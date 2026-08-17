@@ -42,6 +42,8 @@ body{font-family:var(--font);background:var(--bg);color:var(--ink);height:100vh;
 
 #offline-banner{display:none;flex-shrink:0;align-items:center;justify-content:center;gap:6px;padding:7px 12px;background:#3a3226;color:#f0c48a;font-size:12px;font-family:var(--mono);text-align:center;}
 #offline-banner.show{display:flex;}
+#lock-banner{display:none;flex-shrink:0;align-items:center;justify-content:center;gap:6px;padding:7px 12px;background:#3a2226;color:#f0a8a8;font-size:12px;font-family:var(--mono);text-align:center;}
+#lock-banner.show{display:flex;}
 /* 오프라인 저장 버튼 — 상단 헤더의 작은 아이콘 하나로 압축, 진행상태는 배지 색으로만 표시 */
 .header-icon-btn{position:relative;padding:6px 10px;}
 .precache-badge{position:absolute;top:3px;right:3px;width:8px;height:8px;border-radius:50%;background:transparent;}
@@ -307,6 +309,9 @@ body{font-family:var(--font);background:var(--bg);color:var(--ink);height:100vh;
 .ou-actions{display:flex;gap:8px;}
 .ou-actions .dlg-btn{flex:1;}
 
+#lock-conflict-modal{position:fixed;inset:0;z-index:900;background:rgba(0,0,0,0.55);display:none;align-items:center;justify-content:center;padding:16px;}
+#lock-conflict-modal.open{display:flex;}
+
 .toast{position:fixed;bottom:24px;left:50%;transform:translateX(-50%) translateY(8px);background:#1a1814;color:#d8d0c0;padding:10px 20px;border-radius:20px;font-size:12px;opacity:0;pointer-events:none;transition:all 0.25s;z-index:900;white-space:nowrap;}
 .toast.show{opacity:1;transform:translateX(-50%) translateY(0);}
 .toast-action{bottom:64px;display:flex;align-items:center;gap:10px;padding:9px 12px 9px 20px;}
@@ -331,6 +336,7 @@ body{font-family:var(--font);background:var(--bg);color:var(--ink);height:100vh;
   </div>
   <div class="statusline" id="statusline"><span class="sl-dot"></span><span id="sl-text">서버 확인 중…</span></div>
   <div id="offline-banner">📡 오프라인 모드 — 저장된 교재만 열람 가능</div>
+  <div id="lock-banner"><span id="lock-banner-text">🔒 다른 기기에서 편집 중 — 보기 전용</span></div>
 
   <div id="material-screen">
     <div class="ms-tabs">
@@ -575,6 +581,7 @@ body{font-family:var(--font);background:var(--bg);color:var(--ink);height:100vh;
 </div>
 
 <div id="offline-unavail-modal"><div class="ou-box"><div class="ou-icon">📴</div><div class="ou-text" id="ou-text">이 교재는 아직 저장되지 않았어요.</div><div class="ou-actions"><button class="dlg-btn" onclick="closeOfflineUnavailable()">닫기</button><button class="dlg-btn primary" onclick="retryOfflineMaterial()">다시 시도</button></div></div></div>
+<div id="lock-conflict-modal"><div class="ou-box"><div class="ou-icon">🔒</div><div class="ou-text" id="lock-conflict-text">다른 기기에서 편집 중입니다.</div><div class="ou-actions"><button class="dlg-btn" onclick="closeLockConflict()">보기만 하기</button><button class="dlg-btn primary" onclick="forceLockTakeover()">강제로 이어받기</button></div></div></div>
 
 <div class="toast" id="toast"></div>
 <div class="toast toast-action" id="toast-action"><span id="toast-action-msg"></span><button id="toast-action-btn" class="toast-action-btn"></button></div>

@@ -36,6 +36,19 @@ function isSafeKey(id) {
   return typeof id === 'string' && /^[a-zA-Z0-9_-]+$/.test(id) && id.length <= 200;
 }
 
+// device는 사용자가 자유롭게 붙이는 기기 이름(한글 등)이라 isSafeKey로 검증하지 않는다 —
+// 파일 경로나 KV 키가 아니라 값으로만 저장되므로 안전성 문제가 없다.
+function isValidDevice(d) {
+  return typeof d === 'string' && d.length > 0 && d.length <= 100;
+}
+
+// 편집 잠금 — Worker(worker/src/index.js)와 동일한 규칙의 인메모리 버전. 잠금은 원래
+// 5분짜리 TTL로 짧게 사는 정보라 파일로 영속시킬 필요가 없다(서버 재시작 시 초기화돼도
+// 무방 — 어차피 곧 heartbeat가 다시 채운다). Worker 쪽과 반드시 같은 라우트 모양/응답
+// 스키마를 유지할 것 — annotation-engine.js가 base URL만 바꿔서 그대로 재사용하기 때문.
+const locks = new Map(); // key: `${bookId}:${page}` → { device, timestamp }
+const LOCK_TTL_MS = 5 * 60 * 1000;
+
 app.get('/api/ping', (req, res) => {
   res.json({ ok: true, time: new Date().toISOString() });
 });
@@ -160,6 +173,59 @@ app.post('/api/page-order/:bookId', async (req, res) => {
     console.error('[page-order:post]', bookId, e);
     res.status(500).json({ error: 'save failed' });
   }
+});
+
+// 편집 잠금 조회 — 없거나 5분 지났으면 잠기지 않은 것으로 본다.
+app.get('/api/lock/:bookId/:page', (req, res) => {
+  const { bookId, page } = req.params;
+  if (!isSafeKey(bookId) || !isSafeKey(page)) return res.status(400).json({ error: 'invalid bookId/page' });
+  const existing = locks.get(bookId + ':' + page);
+  if (!existing || (Date.now() - existing.timestamp > LOCK_TTL_MS)) return res.json({ locked: false });
+  res.json({ locked: true, device: existing.device, timestamp: existing.timestamp });
+});
+
+// 편집 잠금 획득(POST) / 해제(DELETE, 또는 POST body.release=true — sendBeacon은 POST만
+// 가능하므로 탭 닫을 때의 해제도 이 라우트로 들어온다).
+function handleLockAcquireOrRelease(req, res) {
+  const { bookId, page } = req.params;
+  if (!isSafeKey(bookId) || !isSafeKey(page)) return res.status(400).json({ error: 'invalid bookId/page' });
+  const { device, force, release } = req.body || {};
+  if (!isValidDevice(device)) return res.status(400).json({ error: 'invalid device' });
+  const key = bookId + ':' + page;
+
+  if (req.method === 'DELETE' || release === true) {
+    const existing = locks.get(key);
+    if (existing && existing.device === device) { locks.delete(key); return res.json({ ok: true, released: true }); }
+    return res.json({ ok: true, released: false });
+  }
+
+  const now = Date.now();
+  const existing = locks.get(key);
+  const expired = !existing || (now - existing.timestamp > LOCK_TTL_MS);
+  const mine = existing && existing.device === device;
+  if (expired || mine || force === true) {
+    locks.set(key, { device, timestamp: now });
+    return res.json({ ok: true, device, timestamp: now });
+  }
+  res.status(409).json({ locked: true, device: existing.device, timestamp: existing.timestamp });
+}
+app.post('/api/lock/:bookId/:page', handleLockAcquireOrRelease);
+app.delete('/api/lock/:bookId/:page', handleLockAcquireOrRelease);
+
+app.post('/api/lock/:bookId/:page/heartbeat', (req, res) => {
+  const { bookId, page } = req.params;
+  if (!isSafeKey(bookId) || !isSafeKey(page)) return res.status(400).json({ error: 'invalid bookId/page' });
+  const { device } = req.body || {};
+  if (!isValidDevice(device)) return res.status(400).json({ error: 'invalid device' });
+  const key = bookId + ':' + page;
+  const now = Date.now();
+  const existing = locks.get(key);
+  const expired = !existing || (now - existing.timestamp > LOCK_TTL_MS);
+  if (expired || existing.device === device) {
+    locks.set(key, { device, timestamp: now });
+    return res.json({ ok: true, device, timestamp: now });
+  }
+  res.status(409).json({ locked: true, device: existing.device, timestamp: existing.timestamp });
 });
 
 app.listen(PORT, '0.0.0.0', () => {

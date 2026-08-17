@@ -28,6 +28,14 @@ function isSafeKey(id) {
   return typeof id === 'string' && /^[a-zA-Z0-9_-]+$/.test(id) && id.length <= 200;
 }
 
+// device는 사용자가 자유롭게 붙이는 기기 이름(한글 등 자유 텍스트)이라 isSafeKey로
+// 검증하지 않는다 — KV 키가 아니라 값으로만 저장되므로 URL/키 안전성 문제가 없다.
+function isValidDevice(d) {
+  return typeof d === 'string' && d.length > 0 && d.length <= 100;
+}
+
+const LOCK_TTL_MS = 5 * 60 * 1000; // 5분 — 이 시간이 지난 잠금은 만료된 것으로 간주
+
 function safeExt(filename, mime) {
   const m = /\.([a-zA-Z0-9]{1,5})$/.exec(filename || '');
   if (m) return '.' + m[1].toLowerCase();
@@ -142,6 +150,76 @@ export default {
         await env.LESSON_NOTES.put(key, bytes, { httpMetadata: { contentType: m[1] } });
         const publicUrl = env.LESSON_NOTES_PUBLIC_URL + '/' + key;
         return json({ ok: true, path: publicUrl }, 200, origin);
+      }
+
+      // /api/lock/:bookId/:page/heartbeat — 먼저 검사해야 함(5조각, 아래 4조각 라우트보다 길다)
+      if (request.method === 'POST' && parts.length === 5 && parts[0] === 'api' && parts[1] === 'lock' && parts[4] === 'heartbeat') {
+        const bookId = parts[2], page = decodeURIComponent(parts[3]);
+        if (!isSafeKey(bookId) || !isSafeKey(page)) return json({ error: 'invalid bookId/page' }, 400, origin);
+        const body = await request.json().catch(() => null);
+        const device = body && body.device;
+        if (!isValidDevice(device)) return json({ error: 'invalid device' }, 400, origin);
+
+        const lockKey = 'lock:' + bookId + ':' + page;
+        const raw = await env.KUMON_LAYERS.get(lockKey);
+        const now = Date.now();
+        const existing = raw ? JSON.parse(raw) : null;
+        const expired = !existing || (now - existing.timestamp > LOCK_TTL_MS);
+
+        if (expired || existing.device === device) {
+          const payload = { device, timestamp: now };
+          await env.KUMON_LAYERS.put(lockKey, JSON.stringify(payload));
+          return json({ ok: true, device, timestamp: now }, 200, origin);
+        }
+        return json({ locked: true, device: existing.device, timestamp: existing.timestamp }, 409, origin);
+      }
+
+      // /api/lock/:bookId/:page — 획득(POST, body.release=true면 해제 — sendBeacon은 POST만
+      // 가능하므로 언로드 시점 해제도 이 라우트를 함께 쓴다) / 해제(DELETE) / 조회(GET)
+      if (parts.length === 4 && parts[0] === 'api' && parts[1] === 'lock') {
+        const bookId = parts[2], page = decodeURIComponent(parts[3]);
+        if (!isSafeKey(bookId) || !isSafeKey(page)) return json({ error: 'invalid bookId/page' }, 400, origin);
+        const lockKey = 'lock:' + bookId + ':' + page;
+
+        if (request.method === 'GET') {
+          const raw = await env.KUMON_LAYERS.get(lockKey);
+          const existing = raw ? JSON.parse(raw) : null;
+          if (!existing || (Date.now() - existing.timestamp > LOCK_TTL_MS)) return json({ locked: false }, 200, origin);
+          return json({ locked: true, device: existing.device, timestamp: existing.timestamp }, 200, origin);
+        }
+
+        if (request.method === 'DELETE' || request.method === 'POST') {
+          const body = await request.json().catch(() => null);
+          const device = body && body.device;
+          if (!isValidDevice(device)) return json({ error: 'invalid device' }, 400, origin);
+
+          // sendBeacon으로 온 해제 요청(POST + release:true) 또는 명시적 DELETE — 자기 소유일
+          // 때만 실제로 지운다. 소유자가 다르거나 이미 없으면 그냥 성공 처리(해제는 멱등).
+          if (request.method === 'DELETE' || body.release === true) {
+            const raw = await env.KUMON_LAYERS.get(lockKey);
+            const existing = raw ? JSON.parse(raw) : null;
+            if (existing && existing.device === device) {
+              await env.KUMON_LAYERS.delete(lockKey);
+              return json({ ok: true, released: true }, 200, origin);
+            }
+            return json({ ok: true, released: false }, 200, origin);
+          }
+
+          // 일반 획득
+          const raw = await env.KUMON_LAYERS.get(lockKey);
+          const now = Date.now();
+          const existing = raw ? JSON.parse(raw) : null;
+          const expired = !existing || (now - existing.timestamp > LOCK_TTL_MS);
+          const mine = existing && existing.device === device;
+          const force = body.force === true;
+
+          if (expired || mine || force) {
+            const payload = { device, timestamp: now };
+            await env.KUMON_LAYERS.put(lockKey, JSON.stringify(payload));
+            return json({ ok: true, device, timestamp: now }, 200, origin);
+          }
+          return json({ locked: true, device: existing.device, timestamp: existing.timestamp }, 409, origin);
+        }
       }
 
       return json({ error: 'not found' }, 404, origin);
