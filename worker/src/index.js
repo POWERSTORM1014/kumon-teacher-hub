@@ -9,6 +9,10 @@
 //   data/page-order/<bookId>.json          → KV key "pageorder:<bookId>"
 // 하나의 KV 네임스페이스를 layers/page-order가 함께 쓰므로, 로컬의 디렉토리 분리
 // 대신 키 접두사로 같은 구분을 유지한다.
+//
+// 라우트 경로 모양은 로컬 server.js와 반드시 동일해야 한다 — annotation-engine.js가
+// 두 백엔드 중 어디를 향하든 base URL만 바꿔서 같은 fetch 호출을 그대로 재사용하기
+// 때문이다(/api/layers/:pageId 하나의 경로 조각, bookId__page 형태로 이미 합쳐져서 옴).
 
 const MAX_UPLOAD_BYTES = 25 * 1024 * 1024;
 
@@ -63,11 +67,11 @@ export default {
         return json({ ok: true, time: new Date().toISOString() }, 200, origin);
       }
 
-      // /api/layers/:bookId/:page
-      if (parts.length === 4 && parts[0] === 'api' && parts[1] === 'layers') {
-        const [, , bookId, page] = parts;
-        if (!isSafeKey(bookId) || !isSafeKey(page)) return json({ error: 'invalid bookId/page' }, 400, origin);
-        const kvKey = 'layer:' + bookId + '__' + page;
+      // /api/layers/:pageId (pageId = bookId__page, 클라이언트가 이미 encodeURIComponent로 합쳐서 보냄)
+      if (parts.length === 3 && parts[0] === 'api' && parts[1] === 'layers') {
+        const pageId = decodeURIComponent(parts[2]);
+        if (!isSafeKey(pageId)) return json({ error: 'invalid pageId' }, 400, origin);
+        const kvKey = 'layer:' + pageId;
 
         if (request.method === 'GET') {
           const raw = await env.KUMON_LAYERS.get(kvKey);
@@ -83,7 +87,7 @@ export default {
           }
           const savedAt = new Date().toISOString();
           const payload = {
-            pageId: bookId + '__' + page, layers, strokes, savedAt,
+            pageId, layers, strokes, savedAt,
             device: device || 'unknown', deviceId: deviceId || null, deviceType: deviceType || null
           };
           await env.KUMON_LAYERS.put(kvKey, JSON.stringify(payload));

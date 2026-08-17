@@ -29,6 +29,19 @@
     return src.replace(/shared\/annotation-engine\.js(\?.*)?$/, '');
   })();
 
+  // API 백엔드 주소 — PDF_BASE_URL(아래 pdfUrl 참고)과 같은 방식으로 이 한 곳에서만
+  // 정의한다. 로컬(localhost)에서는 지금까지처럼 같은 폴더의 server.js를 그대로 쓰고,
+  // 그 외 배포 환경(GitHub Pages 등)에서는 정적 호스팅이라 자체 API가 없으므로
+  // Cloudflare Workers 백엔드를 바라본다. 두 백엔드는 라우트 경로 모양이 완전히
+  // 동일하게 맞춰져 있으므로(예: /api/layers/:pageId), 아래 API_BASE_URL 뒤에
+  // 이어붙이는 나머지 코드는 어느 쪽을 향하는지 신경 쓸 필요가 없다.
+  const WORKERS_API_URL = 'https://kumon-teacher-hub-api.kumon-teacher-hub-api.workers.dev/api/';
+  const API_BASE_URL = (function () {
+    const h = location.hostname;
+    if (h === 'localhost' || h === '127.0.0.1') return SITE_ROOT + 'api/';
+    return WORKERS_API_URL;
+  })();
+
   /* ══════════════════════════════════════════════════════════
      0. 공통 유틸
   ══════════════════════════════════════════════════════════ */
@@ -110,7 +123,7 @@
       if (!(await ping())) return { ok: false, offline: true };
       try {
         await migrateDataUrlAssets(bookId, pageId, rec);
-        const res = await fetch(SITE_ROOT + 'api/layers/' + encodeURIComponent(fullKey(bookId, pageId)), {
+        const res = await fetch(API_BASE_URL + 'layers/' + encodeURIComponent(fullKey(bookId, pageId)), {
           method: 'POST', headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ layers: rec.layers, strokes: rec.strokes, device: Device.getLabel(), deviceId: Device.getId(), deviceType: Device.getTypeDesc() })
         });
@@ -126,7 +139,7 @@
 
     async function fetchRemoteLayer(bookId, pageId) {
       try {
-        const res = await fetch(SITE_ROOT + 'api/layers/' + encodeURIComponent(fullKey(bookId, pageId)), { cache: 'no-store' });
+        const res = await fetch(API_BASE_URL + 'layers/' + encodeURIComponent(fullKey(bookId, pageId)), { cache: 'no-store' });
         if (!res.ok) return null;
         return await res.json();
       } catch (e) { return null; }
@@ -153,7 +166,7 @@
     async function uploadAsset(bookId, pageId, kind, dataUrl, filename) {
       if (!(await ping())) return null;
       try {
-        const res = await fetch(SITE_ROOT + 'api/upload', {
+        const res = await fetch(API_BASE_URL + 'upload', {
           method: 'POST', headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ kind, pageId: fullKey(bookId, pageId), dataUrl, filename })
         });
@@ -192,7 +205,7 @@
     async function pushPageOrderToServer(bookId, order) {
       if (!(await ping())) return;
       try {
-        const res = await fetch(SITE_ROOT + 'api/page-order/' + encodeURIComponent(bookId), {
+        const res = await fetch(API_BASE_URL + 'page-order/' + encodeURIComponent(bookId), {
           method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ order })
         });
         if (!res.ok) return;
@@ -202,7 +215,7 @@
     }
     async function fetchRemotePageOrder(bookId) {
       try {
-        const res = await fetch(SITE_ROOT + 'api/page-order/' + encodeURIComponent(bookId), { cache: 'no-store' });
+        const res = await fetch(API_BASE_URL + 'page-order/' + encodeURIComponent(bookId), { cache: 'no-store' });
         if (!res.ok) return null;
         return await res.json();
       } catch (e) { return null; }
@@ -212,7 +225,7 @@
     // 로컬 서버는 같은 기기 안에서 돌기 때문에 와이파이 상태와 무관하다). ──
     async function ping(timeoutMs) {
       try {
-        const res = await fetch(SITE_ROOT + 'api/ping', { cache: 'no-store', signal: AbortSignal.timeout(timeoutMs || 3000) });
+        const res = await fetch(API_BASE_URL + 'ping', { cache: 'no-store', signal: AbortSignal.timeout(timeoutMs || 3000) });
         return !!(res && res.ok);
       } catch (e) { return false; }
     }
