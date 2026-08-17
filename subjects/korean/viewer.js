@@ -200,12 +200,12 @@ function withTimeout(promise, ms, label) {
 }
 async function openMaterial(file) {
   const m = MATERIALS.find(x => x.file === file); if (!m) return;
-  const url = '/pdf/' + m.file;
+  const url = Engine.pdfUrl(m.file); // R2 공개 URL — 로컬 pdf/ 폴더는 더 이상 참조하지 않음
   try {
     const cachedRes = ('caches' in window) ? await caches.match(url).catch(() => null) : null;
     if (!cachedRes) {
-      const { online } = await Engine.PWA.refreshServerOnline(2500);
-      if (!online) { showOfflineUnavailable(m); return; }
+      const reachable = await Engine.PWA.isUrlReachable(url, 2500);
+      if (!reachable) { showOfflineUnavailable(m); return; }
     }
     currentMaterial = m; currentIsCustom = false; bookId = bookIdOf(m);
     showViewer();
@@ -1306,8 +1306,8 @@ async function checkServerHealth() {
   // 다시 연결됐다고 해서 자동으로 큰 PDF들을 전부 받기 시작하지 않는다.
 }
 function buildPrecacheUrls() {
-  const urls = ['/index.html', '/subjects.json', '/manifest.json', '/shared/annotation-engine.js', '/subjects/korean/viewer.html', '/subjects/korean/viewer.js', '/subjects/korean/korean-data.js'];
-  MATERIALS.forEach(m => urls.push('/pdf/' + m.file));
+  const urls = ['../../index.html', '../../subjects.json', '../../manifest.json', '../../shared/annotation-engine.js', './viewer.html', './viewer.js', './korean-data.js'];
+  MATERIALS.forEach(m => urls.push(Engine.pdfUrl(m.file))); // R2 공개 URL
   return urls;
 }
 // 배지 색으로만 상태를 표시(idle=투명, 진행중=노랑 깜빡, 완료=초록, 실패=빨강) —
@@ -1335,7 +1335,6 @@ async function precacheAllScience(manual) {
         showToast('⚠️ 일부 자료를 저장하지 못했어요');
         setTimeout(() => setPrecacheBadge(''), 4000);
       },
-      onUnavailable: () => { setPrecacheBadge(''); if (manual) showToast('로컬 서버에 연결할 수 없어요'); },
       onBusy: () => { if (manual) showToast('이미 저장을 진행 중이에요'); }
     });
   } finally { precacheBusy = false; }
@@ -1346,10 +1345,10 @@ async function manualPrecacheAll() {
 }
 
 /* ══ 과목 전환기 / 허브 이동 ══════════════════════════════ */
-function goHome() { location.href = '/index.html'; }
+function goHome() { location.href = '../../index.html'; }
 async function initSubjectSwitcher() {
   try {
-    const res = await fetch('/subjects.json', { cache: 'no-store' });
+    const res = await fetch('../../subjects.json', { cache: 'no-store' });
     const subjects = await res.json();
     const sel = document.getElementById('subject-switcher-select');
     sel.innerHTML = subjects.map(s => `<option value="${s.viewer}" ${s.id === CURRENT_SUBJECT_ID ? 'selected' : ''}>${s.icon} ${s.name}</option>`).join('');
@@ -1405,7 +1404,7 @@ document.addEventListener('DOMContentLoaded', () => {
   Engine.Events.on(handleStructureChanged);
   makeDialogDraggable('te-box', 'te-drag-handle');
   makeDialogDraggable('ie-box', 'ie-drag-handle');
-  Engine.PWA.registerServiceWorker('/sw.js', {}); // 앱 셸만 SW가 자동 캐싱 — PDF 전체 저장은 📥 버튼으로만
+  Engine.PWA.registerServiceWorker('../../sw.js', {}); // 앱 셸만 SW가 자동 캐싱 — PDF 전체 저장은 📥 버튼으로만
   checkServerHealth();
   setInterval(checkServerHealth, 30000);
   openFromDeepLink();

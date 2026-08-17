@@ -15,3 +15,6 @@ npm-debug.log*
 .env
 .env.*
 *.pem
+
+# Claude Code 세션 메타데이터
+.claude/

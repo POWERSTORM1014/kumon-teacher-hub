@@ -23,11 +23,15 @@ const SW_VERSION = 'v1';
 const SHELL_CACHE = 'kth-shell-' + SW_VERSION;
 const CONTENT_CACHE = 'kth-content-v1'; // 각 뷰어의 CACHE_NAME과 반드시 동일해야 함
 
+// sw.js 자신은 항상 저장소 루트에 있으므로(로컬이든 GitHub Pages 하위 경로든), 여기서
+// './'로 시작하는 상대경로는 이 스크립트 자신의 위치(=사이트 루트) 기준으로 풀리며
+// 배포 환경에 무관하게 항상 올바르다. 맨 앞에 '/'를 쓰면 하위 경로 배포에서
+// 도메인 최상위로 잘못 풀려 404가 난다.
 const SHELL_URLS = [
-  '/index.html',
-  '/subjects.json',
-  '/manifest.json',
-  '/shared/annotation-engine.js',
+  './index.html',
+  './subjects.json',
+  './manifest.json',
+  './shared/annotation-engine.js',
   'https://fonts.googleapis.com/css2?family=Noto+Sans+KR:wght@300;400;500;700;900&family=DM+Mono:wght@400;500&display=swap',
   'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js',
   'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js',
@@ -68,7 +72,7 @@ async function handleNavigate(req) {
   } catch (e) {
     const cached = await caches.match(req, { ignoreVary: true, ignoreSearch: true });
     if (cached) return cached;
-    const shellFallback = await caches.match('/index.html', { ignoreSearch: true });
+    const shellFallback = await caches.match('./index.html', { ignoreSearch: true });
     if (shellFallback) return shellFallback;
     throw e;
   }
@@ -102,6 +106,8 @@ async function handleFetch(req) {
 // SHELL_CACHE로 분류한다 — precacheAll()이 명시적으로 채우는 캐시와 이름을 맞춰야
 // isMaterialCached()류 조회가 어느 쪽에 들어있든 일관되게 찾아낸다.
 function isContentUrl(url) {
+  // GitHub Pages 하위 경로 배포에서는 pathname이 '/kumon-teacher-hub/subjects/...'
+  // 처럼 접두사가 붙으므로, startsWith 대신 includes로 배포 경로 깊이에 무관하게 판정한다.
   const pathname = new URL(url).pathname;
-  return pathname.startsWith('/pdf/') || pathname.startsWith('/subjects/');
+  return pathname.includes('/pdf/') || pathname.includes('/subjects/');
 }

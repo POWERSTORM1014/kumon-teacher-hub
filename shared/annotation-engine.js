@@ -18,6 +18,17 @@
 (function (global) {
   'use strict';
 
+  // 이 스크립트는 index.html(루트)과 subjects/<id>/viewer.html(2단계 아래) 양쪽에서
+  // 로드되므로, 안에서 쓰는 /api/* 경로를 고정된 상대경로 문자열로 적으면 둘 중 한쪽에서
+  // 반드시 깨진다. 대신 이 스크립트 자신의 <script src> 를 통해 "사이트 루트"를
+  // 역산한다 — 로컬(도메인 최상위)이든 GitHub Pages(하위 경로)든, 이 파일이 실제로
+  // 위치한 shared/ 폴더의 부모가 곧 사이트 루트이므로 배포 환경에 무관하게 항상 맞다.
+  const SITE_ROOT = (function () {
+    const src = document.currentScript && document.currentScript.src;
+    if (!src) return './';
+    return src.replace(/shared\/annotation-engine\.js(\?.*)?$/, '');
+  })();
+
   /* ══════════════════════════════════════════════════════════
      0. 공통 유틸
   ══════════════════════════════════════════════════════════ */
@@ -99,7 +110,7 @@
       if (!(await ping())) return { ok: false, offline: true };
       try {
         await migrateDataUrlAssets(bookId, pageId, rec);
-        const res = await fetch('/api/layers/' + encodeURIComponent(fullKey(bookId, pageId)), {
+        const res = await fetch(SITE_ROOT + 'api/layers/' + encodeURIComponent(fullKey(bookId, pageId)), {
           method: 'POST', headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ layers: rec.layers, strokes: rec.strokes, device: Device.getLabel(), deviceId: Device.getId(), deviceType: Device.getTypeDesc() })
         });
@@ -115,7 +126,7 @@
 
     async function fetchRemoteLayer(bookId, pageId) {
       try {
-        const res = await fetch('/api/layers/' + encodeURIComponent(fullKey(bookId, pageId)), { cache: 'no-store' });
+        const res = await fetch(SITE_ROOT + 'api/layers/' + encodeURIComponent(fullKey(bookId, pageId)), { cache: 'no-store' });
         if (!res.ok) return null;
         return await res.json();
       } catch (e) { return null; }
@@ -142,7 +153,7 @@
     async function uploadAsset(bookId, pageId, kind, dataUrl, filename) {
       if (!(await ping())) return null;
       try {
-        const res = await fetch('/api/upload', {
+        const res = await fetch(SITE_ROOT + 'api/upload', {
           method: 'POST', headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ kind, pageId: fullKey(bookId, pageId), dataUrl, filename })
         });
@@ -157,7 +168,7 @@
     function normalizeAssetSrc(src) {
       if (!src) return src;
       if (src.startsWith('data:') || src.startsWith('http:') || src.startsWith('https:') || src.startsWith('/')) return src;
-      return '/' + src;
+      return SITE_ROOT + src;
     }
 
     // ── 페이지 순서 ──
@@ -181,7 +192,7 @@
     async function pushPageOrderToServer(bookId, order) {
       if (!(await ping())) return;
       try {
-        const res = await fetch('/api/page-order/' + encodeURIComponent(bookId), {
+        const res = await fetch(SITE_ROOT + 'api/page-order/' + encodeURIComponent(bookId), {
           method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ order })
         });
         if (!res.ok) return;
@@ -191,7 +202,7 @@
     }
     async function fetchRemotePageOrder(bookId) {
       try {
-        const res = await fetch('/api/page-order/' + encodeURIComponent(bookId), { cache: 'no-store' });
+        const res = await fetch(SITE_ROOT + 'api/page-order/' + encodeURIComponent(bookId), { cache: 'no-store' });
         if (!res.ok) return null;
         return await res.json();
       } catch (e) { return null; }
@@ -201,7 +212,7 @@
     // 로컬 서버는 같은 기기 안에서 돌기 때문에 와이파이 상태와 무관하다). ──
     async function ping(timeoutMs) {
       try {
-        const res = await fetch('/api/ping', { cache: 'no-store', signal: AbortSignal.timeout(timeoutMs || 3000) });
+        const res = await fetch(SITE_ROOT + 'api/ping', { cache: 'no-store', signal: AbortSignal.timeout(timeoutMs || 3000) });
         return !!(res && res.ok);
       } catch (e) { return false; }
     }
@@ -1507,6 +1518,18 @@
       return { online: serverOnline, wasOnline };
     }
     function isServerOnline() { return serverOnline; }
+    // PDF는 로컬 서버가 아니라 R2(외부 CDN)에서 오므로, "이 자료를 지금 받을 수 있는가"는
+    // 로컬 서버 ping과 무관하다 — 해당 URL 자체에 짧은 타임아웃으로 HEAD 요청을 보내
+    // 직접 확인한다.
+    async function isUrlReachable(url, timeoutMs) {
+      try {
+        const ctrl = ('AbortController' in window) ? new AbortController() : null;
+        const t = ctrl ? setTimeout(() => ctrl.abort(), timeoutMs || 2500) : null;
+        const res = await fetch(url, { method: 'HEAD', cache: 'no-store', signal: ctrl ? ctrl.signal : undefined });
+        if (t) clearTimeout(t);
+        return !!(res && (res.ok || res.status === 206));
+      } catch (e) { return false; }
+    }
 
     function registerServiceWorker(swUrl, opts) {
       opts = opts || {};
@@ -1528,7 +1551,9 @@
       opts = opts || {};
       if (precacheRunning) { if (opts.manual && opts.onBusy) opts.onBusy(); return; }
       if (!('caches' in window)) return;
-      if (!serverOnline) { const r = await refreshServerOnline(); if (!r.online) { if (opts.onUnavailable) opts.onUnavailable(); return; } }
+      // urls에는 로컬 shell 파일과 R2(외부) PDF가 섞여 있어 "로컬 서버가 켜져 있는가"는
+      // 더 이상 전체 저장 가능 여부의 정확한 판단 기준이 아니다 — 사전 게이트 없이 각 파일을
+      // 개별적으로 시도하고, 실패한 항목만 onError로 보고한다.
       precacheRunning = true;
       try {
         const cache = await caches.open(cacheName);
@@ -1544,7 +1569,10 @@
           while (idx < pending.length) {
             const url = pending[idx++];
             try {
-              const res = await fetch(url, { cache: 'no-store' });
+              const ctrl = ('AbortController' in window) ? new AbortController() : null;
+              const t = ctrl ? setTimeout(() => ctrl.abort(), 15000) : null;
+              const res = await fetch(url, { cache: 'no-store', signal: ctrl ? ctrl.signal : undefined });
+              if (t) clearTimeout(t);
               if (res && res.ok) { await cache.put(url, res); done++; } else { otherFailed++; }
             } catch (e) {
               if (e && (e.name === 'QuotaExceededError' || /quota/i.test(e.message || ''))) quotaFailed = true; else otherFailed++;
@@ -1559,15 +1587,21 @@
       } finally { precacheRunning = false; }
     }
 
-    return { refreshServerOnline, isServerOnline, registerServiceWorker, isCached, precacheAll };
+    return { refreshServerOnline, isServerOnline, isUrlReachable, registerServiceWorker, isCached, precacheAll };
   })();
+
+  // 교재 원본 PDF는 Cloudflare R2(공개 버킷)에서 서빙한다. 이 상수 하나가 유일한
+  // 설정 지점이다 — 커스텀 도메인으로 옮기거나 다른 저장소로 바꿀 때 여기만 고치면
+  // 7개 과목 뷰어 전체에 그대로 반영된다. 절대 이 URL을 다른 파일에 직접 적지 말 것.
+  const PDF_BASE_URL = 'https://pub-2c7274e37bd74104881b4f0c725f33c0.r2.dev/';
+  function pdfUrl(filename) { return PDF_BASE_URL + filename; }
 
   /* ══════════════════════════════════════════════════════════
      공개 API
   ══════════════════════════════════════════════════════════ */
   const AnnotationEngine = {
     Storage, Device, Events, PageOrder, Elements, Color, Ink, Tools, Page, Sync, PWA,
-    genElementId, genPageId,
+    genElementId, genPageId, pdfUrl,
 
     // bookId(=PDF 파일명, 확장자 제외) 전환 — 새 교재를 열 때 반드시 호출.
     setBook(bookId) { Elements.setBook(bookId); Page.unmountAll(); },

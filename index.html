@@ -224,8 +224,8 @@ document.addEventListener('click', e => { if (!e.target.closest('.search-wrap'))
 
 /* ── PWA ── */
 if ('serviceWorker' in navigator) {
-  Engine.PWA.registerServiceWorker('/sw.js', {
-    onRegistered: () => Engine.PWA.precacheAll('kth-content-v1', ['/index.html', '/subjects.json', '/manifest.json', '/shared/annotation-engine.js'], {})
+  Engine.PWA.registerServiceWorker('./sw.js', {
+    onRegistered: () => Engine.PWA.precacheAll('kth-content-v1', ['./index.html', './subjects.json', './manifest.json', './shared/annotation-engine.js'], {})
   });
 }
 
