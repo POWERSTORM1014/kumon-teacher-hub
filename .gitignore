@@ -1,0 +1,17 @@
+node_modules/
+
+# 사용자 필기 데이터 — 개인정보 성격, 로컬에만 존재해야 함
+data/
+
+# 교재 원본 PDF — 용량이 크고 Cloudflare R2로 이전 예정, 절대 커밋하지 말 것
+pdf/
+
+# 로그 파일
+*.log
+server.log
+npm-debug.log*
+
+# 환경설정/비밀 파일
+.env
+.env.*
+*.pem

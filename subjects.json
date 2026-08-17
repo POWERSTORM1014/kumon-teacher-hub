@@ -1,0 +1,72 @@
+[
+  {
+    "id": "science",
+    "name": "과학",
+    "icon": "🔬",
+    "color": "#e8401c",
+    "colorLight": "#fde8e3",
+    "viewer": "subjects/science/viewer.html",
+    "searchIndexUrl": "subjects/science/search-index.json",
+    "status": "active"
+  },
+  {
+    "id": "math",
+    "name": "수학",
+    "icon": "📐",
+    "color": "#1a3a6b",
+    "colorLight": "#e5eaf3",
+    "viewer": "subjects/math/viewer.html",
+    "searchIndexUrl": "subjects/math/search-index.json",
+    "status": "active"
+  },
+  {
+    "id": "english",
+    "name": "영어",
+    "icon": "🔤",
+    "color": "#ce93d8",
+    "colorLight": "#f9f2fa",
+    "viewer": "subjects/english/viewer.html",
+    "searchIndexUrl": "subjects/english/search-index.json",
+    "status": "active"
+  },
+  {
+    "id": "korean",
+    "name": "국어",
+    "icon": "📖",
+    "color": "#ff6b6b",
+    "colorLight": "#ffeded",
+    "viewer": "subjects/korean/viewer.html",
+    "searchIndexUrl": "subjects/korean/search-index.json",
+    "status": "active"
+  },
+  {
+    "id": "hanja",
+    "name": "한자",
+    "icon": "字",
+    "color": "#ffb74d",
+    "colorLight": "#fff6ea",
+    "viewer": "subjects/hanja/viewer.html",
+    "searchIndexUrl": "subjects/hanja/search-index.json",
+    "status": "active"
+  },
+  {
+    "id": "chinese",
+    "name": "중국어",
+    "icon": "🇨🇳",
+    "color": "#d84545",
+    "colorLight": "#fae9e9",
+    "viewer": "subjects/chinese/viewer.html",
+    "searchIndexUrl": "subjects/chinese/search-index.json",
+    "status": "active"
+  },
+  {
+    "id": "japanese",
+    "name": "일본어",
+    "icon": "🇯🇵",
+    "color": "#f48fb1",
+    "colorLight": "#fef2f6",
+    "viewer": "subjects/japanese/viewer.html",
+    "searchIndexUrl": "subjects/japanese/search-index.json",
+    "status": "active"
+  }
+]

@@ -1,0 +1,240 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1.0,viewport-fit=cover">
+<title>구몬 학습 허브</title>
+<link rel="manifest" href="manifest.json">
+<meta name="theme-color" content="#e8401c">
+<link rel="icon" href="icon.svg" type="image/svg+xml">
+<link rel="apple-touch-icon" href="icon-180.png">
+<link href="https://fonts.googleapis.com/css2?family=Noto+Sans+KR:wght@300;400;500;700;900&family=DM+Mono:wght@400;500&display=swap" rel="stylesheet">
+<style>
+:root{
+  --bg:#f5f3ef; --surface:#ffffff; --border:#e8e4dc; --ink:#1a1814; --ink-mid:#6a6258; --ink-light:#aaa49c;
+  --accent:#e8401c; --accent-light:#fde8e3;
+  --font:'Noto Sans KR',sans-serif; --mono:'DM Mono',monospace;
+  --shadow:0 2px 12px rgba(0,0,0,0.08); --shadow-lg:0 8px 32px rgba(0,0,0,0.12); --radius:14px;
+}
+body.dark{ --bg:#0e0c0a; --surface:#1a1814; --border:#2a2820; --ink:#d8d0c0; --ink-mid:#6a6258; --ink-light:#3a3830; --accent-light:rgba(232,64,28,0.12); }
+*{margin:0;padding:0;box-sizing:border-box;}
+body{font-family:var(--font);background:var(--bg);color:var(--ink);min-height:100vh;min-height:100dvh;}
+
+.header{background:var(--accent);padding:14px 20px;padding-top:calc(14px + env(safe-area-inset-top,0px));display:flex;align-items:center;gap:16px;flex-wrap:wrap;box-shadow:0 2px 8px rgba(232,64,28,0.3);}
+.logo{display:flex;align-items:center;gap:10px;color:#fff;}
+.logo-icon{width:38px;height:38px;border-radius:10px;background:rgba(255,255,255,0.2);display:flex;align-items:center;justify-content:center;font-size:18px;}
+.logo-title{font-size:17px;font-weight:800;}
+.header-spacer{flex:1;}
+.search-wrap{position:relative;width:min(420px,100%);}
+.search-input{width:100%;padding:10px 42px 10px 16px;border-radius:22px;border:none;background:rgba(255,255,255,0.92);font-family:var(--font);font-size:13px;color:var(--ink);outline:none;}
+.search-icon{position:absolute;right:14px;top:50%;transform:translateY(-50%);color:var(--ink-light);font-size:14px;pointer-events:none;}
+.search-results{position:absolute;top:calc(100% + 6px);left:0;right:0;background:var(--surface);border:1px solid var(--border);border-radius:var(--radius);max-height:360px;overflow-y:auto;box-shadow:var(--shadow-lg);z-index:300;display:none;}
+.search-group-title{padding:8px 14px;font-size:10px;font-weight:800;letter-spacing:.08em;text-transform:uppercase;color:var(--ink-light);background:var(--bg);}
+.search-item{display:flex;align-items:center;gap:10px;padding:10px 14px;cursor:pointer;border-bottom:1px solid var(--border);}
+.search-item:hover{background:var(--accent-light);}
+.search-item .si-badge{font-family:var(--mono);font-size:11px;font-weight:700;color:var(--accent);background:var(--accent-light);padding:2px 7px;border-radius:6px;flex-shrink:0;}
+.search-item .si-text{font-size:13px;color:var(--ink);}
+.search-item .si-sub{font-size:11px;color:var(--ink-mid);margin-top:1px;}
+.search-empty{padding:16px;text-align:center;color:var(--ink-mid);font-size:12px;}
+.header-btn{padding:7px 12px;border-radius:8px;border:1px solid rgba(255,255,255,0.35);background:none;color:#fff;font-size:12px;font-family:var(--font);cursor:pointer;flex-shrink:0;}
+.header-btn:hover{background:rgba(255,255,255,0.15);}
+
+.statusline{height:30px;background:var(--surface);border-bottom:1px solid var(--border);display:flex;align-items:center;padding:0 20px;gap:16px;font-size:11.5px;font-family:var(--mono);color:var(--ink-mid);flex-wrap:wrap;}
+.statusline .sl-dot{width:7px;height:7px;border-radius:50%;background:var(--ink-light);flex-shrink:0;}
+.statusline.online .sl-dot{background:#1aad6e;}
+.statusline.offline .sl-dot{background:#f5a623;}
+.sl-item{display:flex;align-items:center;gap:6px;}
+
+.main{max-width:1100px;margin:0 auto;padding:28px 20px 60px;}
+.section-title{font-size:13px;font-weight:800;color:var(--ink-mid);letter-spacing:.04em;margin-bottom:14px;display:flex;align-items:center;gap:8px;}
+.section{margin-bottom:36px;}
+
+.recent-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(220px,1fr));gap:12px;}
+.recent-card{background:var(--surface);border:1px solid var(--border);border-radius:var(--radius);padding:14px 16px;cursor:pointer;transition:box-shadow .15s,transform .15s;}
+.recent-card:hover{box-shadow:var(--shadow);transform:translateY(-1px);}
+.recent-card .rc-subject{font-size:10px;color:var(--accent);font-weight:700;margin-bottom:4px;}
+.recent-card .rc-title{font-size:14px;font-weight:700;color:var(--ink);margin-bottom:4px;}
+.recent-card .rc-time{font-size:11px;color:var(--ink-light);font-family:var(--mono);}
+.empty-hint{color:var(--ink-light);font-size:12.5px;padding:8px 2px;}
+
+.subject-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(180px,1fr));gap:16px;}
+.subject-card{position:relative;border-radius:var(--radius);padding:22px 18px;cursor:pointer;color:#fff;overflow:hidden;box-shadow:var(--shadow);transition:transform .15s,box-shadow .15s;min-height:120px;display:flex;flex-direction:column;justify-content:flex-end;}
+.subject-card:hover{transform:translateY(-3px);box-shadow:var(--shadow-lg);}
+.subject-card .sc-icon{font-size:30px;margin-bottom:10px;}
+.subject-card .sc-name{font-size:16px;font-weight:800;}
+.subject-card.coming-soon{opacity:.55;cursor:default;}
+.subject-card.coming-soon:hover{transform:none;}
+.sc-badge{position:absolute;top:12px;right:12px;font-size:9px;font-weight:700;background:rgba(255,255,255,0.25);padding:3px 8px;border-radius:10px;}
+</style>
+</head>
+<body>
+<div class="header">
+  <div class="logo"><div class="logo-icon">📚</div><div class="logo-title">구몬 학습 허브</div></div>
+  <div class="header-spacer"></div>
+  <div class="search-wrap">
+    <input class="search-input" id="search-input" placeholder="🔍 전체 교재·단원 검색..." oninput="onSearchInput(this.value)" onkeydown="if(event.key==='Escape') clearSearch();">
+    <span class="search-icon">🔍</span>
+    <div class="search-results" id="search-results"></div>
+  </div>
+  <button class="header-btn" onclick="toggleDark()">🌙 다크</button>
+</div>
+
+<div class="statusline" id="statusline">
+  <span class="sl-item"><span class="sl-dot"></span><span id="sl-server">서버 확인 중…</span></span>
+  <span class="sl-item">📱 <span id="sl-device">—</span></span>
+  <span class="sl-item">🕓 마지막 동기화: <span id="sl-lastsync">—</span></span>
+</div>
+
+<div class="main">
+  <div class="section" id="recent-section">
+    <div class="section-title">🕓 최근 학습</div>
+    <div class="recent-grid" id="recent-grid"></div>
+  </div>
+
+  <div class="section">
+    <div class="section-title">📚 전체 과목</div>
+    <div class="subject-grid" id="subject-grid"></div>
+  </div>
+</div>
+
+<script src="shared/annotation-engine.js"></script>
+<script>
+const Engine = AnnotationEngine;
+let subjects = [];
+let searchDataCache = null;
+
+function toggleDark() {
+  const on = document.body.classList.toggle('dark');
+  localStorage.setItem('ann:dark', on ? '1' : '0');
+}
+if (localStorage.getItem('ann:dark') === '1') document.body.classList.add('dark');
+
+async function loadSubjects() {
+  try {
+    const res = await fetch('subjects.json', { cache: 'no-store' });
+    subjects = await res.json();
+  } catch (e) { subjects = []; }
+  renderSubjectGrid();
+}
+
+function renderSubjectGrid() {
+  const grid = document.getElementById('subject-grid');
+  grid.innerHTML = subjects.map(s => `
+    <div class="subject-card" style="background:${s.color || '#888'};" onclick="openSubject('${s.viewer}')">
+      <div class="sc-icon">${s.icon || '📘'}</div>
+      <div class="sc-name">${s.name}</div>
+    </div>`).join('');
+  // subjects.json에 아직 없는 나머지 과목은 "준비 중" 카드로 표시해 향후 확장을 미리 보여준다.
+  const PLANNED = [
+    { id: 'math', name: '수학', icon: '📐', color: '#1a3a6b' },
+    { id: 'english', name: '영어', icon: '🔤', color: '#7b4fbf' },
+    { id: 'korean', name: '국어', icon: '📖', color: '#c0392b' },
+    { id: 'hanja', name: '한자', icon: '字', color: '#8a6d3b' },
+    { id: 'chinese', name: '중국어', icon: '🇨🇳', color: '#b03a2e' },
+    { id: 'japanese', name: '일본어', icon: '🇯🇵', color: '#c2185b' },
+  ].filter(p => !subjects.some(s => s.id === p.id));
+  grid.innerHTML += PLANNED.map(p => `
+    <div class="subject-card coming-soon" style="background:${p.color};">
+      <span class="sc-badge">준비 중</span>
+      <div class="sc-icon">${p.icon}</div>
+      <div class="sc-name">${p.name}</div>
+    </div>`).join('');
+}
+function openSubject(viewerPath) { if (viewerPath) location.href = viewerPath; }
+
+/* ── 최근 학습 ── */
+function renderRecent() {
+  const recents = Engine.Storage.getRecents();
+  const grid = document.getElementById('recent-grid');
+  if (!recents.length) { grid.innerHTML = '<div class="empty-hint">아직 열어본 교재가 없어요 — 아래 과목에서 교재를 선택해보세요.</div>'; return; }
+  grid.innerHTML = recents.slice(0, 2).map(r => {
+    const subj = subjects.find(s => s.id === r.subjectId);
+    return `<div class="recent-card" onclick="openRecent('${r.viewerPath}','${r.bookId}')">
+      <div class="rc-subject">${subj ? subj.icon + ' ' + subj.name : r.subjectId}</div>
+      <div class="rc-title">${r.title}</div>
+      <div class="rc-time">${relativeTimeKo(r.openedAt)}</div>
+    </div>`;
+  }).join('');
+}
+function openRecent(viewerPath, bookId) { location.href = viewerPath + '?book=' + encodeURIComponent(bookId); }
+function relativeTimeKo(iso) {
+  if (!iso) return '';
+  const min = Math.round((Date.now() - new Date(iso).getTime()) / 60000);
+  if (min < 1) return '방금'; if (min < 60) return min + '분 전';
+  const hr = Math.round(min / 60); if (hr < 24) return hr + '시간 전';
+  return new Date(iso).toLocaleDateString('ko-KR');
+}
+
+/* ── 상태 바 ── */
+async function refreshStatusline() {
+  const online = await Engine.Storage.ping(2500);
+  const sl = document.getElementById('statusline');
+  sl.classList.toggle('online', online); sl.classList.toggle('offline', !online);
+  document.getElementById('sl-server').textContent = online ? '서버 연결됨' : '오프라인 모드 · 캐시된 자료';
+  document.getElementById('sl-device').textContent = Engine.Device.getLabel();
+  const recents = Engine.Storage.getRecents();
+  document.getElementById('sl-lastsync').textContent = recents.length ? relativeTimeKo(recents[0].openedAt) : '기록 없음';
+}
+
+/* ── 통합 검색 (과목별 그룹핑) ── */
+async function loadSearchData() {
+  if (searchDataCache) return searchDataCache;
+  const groups = [];
+  for (const s of subjects) {
+    if (!s.searchIndexUrl) continue;
+    try {
+      const res = await fetch(s.searchIndexUrl, { cache: 'no-store' });
+      const items = await res.json();
+      groups.push({ subject: s, items });
+    } catch (e) { /* 해당 과목 인덱스가 없으면 건너뜀 */ }
+  }
+  searchDataCache = groups;
+  return groups;
+}
+let searchTimer = null;
+function onSearchInput(val) {
+  clearTimeout(searchTimer);
+  if (!val.trim()) { document.getElementById('search-results').style.display = 'none'; return; }
+  searchTimer = setTimeout(() => runSearch(val.trim()), 200);
+}
+async function runSearch(query) {
+  const q = query.toLowerCase();
+  const groups = await loadSearchData();
+  const box = document.getElementById('search-results');
+  let html = '';
+  let totalHits = 0;
+  groups.forEach(g => {
+    const hits = g.items.filter(it => (it.label + ' ' + (it.sub || '')).toLowerCase().includes(q)).slice(0, 6);
+    if (!hits.length) return;
+    totalHits += hits.length;
+    html += `<div class="search-group-title">${g.subject.icon} ${g.subject.name}</div>`;
+    html += hits.map(it => `<div class="search-item" onclick="goToSearchResult('${g.subject.viewer}','${it.bookId}',${it.page})">
+      <span class="si-badge">${it.page}p</span>
+      <div><div class="si-text">${it.label}</div><div class="si-sub">${it.sub || ''}</div></div>
+    </div>`).join('');
+  });
+  box.innerHTML = totalHits ? html : `<div class="search-empty">🔍 "${query}" 검색 결과 없음</div>`;
+  box.style.display = '';
+}
+function goToSearchResult(viewerPath, bookId, page) {
+  location.href = viewerPath + '?book=' + encodeURIComponent(bookId) + '&page=' + encodeURIComponent(page);
+}
+function clearSearch() { document.getElementById('search-input').value = ''; document.getElementById('search-results').style.display = 'none'; }
+document.addEventListener('click', e => { if (!e.target.closest('.search-wrap')) document.getElementById('search-results').style.display = 'none'; });
+
+/* ── PWA ── */
+if ('serviceWorker' in navigator) {
+  Engine.PWA.registerServiceWorker('/sw.js', {
+    onRegistered: () => Engine.PWA.precacheAll('kth-content-v1', ['/index.html', '/subjects.json', '/manifest.json', '/shared/annotation-engine.js'], {})
+  });
+}
+
+(async function init() {
+  await loadSubjects();
+  renderRecent();
+  refreshStatusline();
+  setInterval(refreshStatusline, 30000);
+})();
+</script>
+</body>
+</html>

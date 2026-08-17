@@ -1,0 +1,13 @@
+{
+  "name": "kumon-teacher-hub",
+  "version": "1.0.0",
+  "private": true,
+  "description": "구몬 학습 허브 — 과목별 PDF 교재 뷰어 + 로컬 동기화 서버(정적 파일 서빙 + 필기 데이터 저장/불러오기 API)",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js"
+  },
+  "dependencies": {
+    "express": "^4.19.2"
+  }
+}
