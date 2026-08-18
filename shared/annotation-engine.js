@@ -1128,7 +1128,6 @@
       if (!groupSel || groupSel.pos !== pos || !groupSel.ids.size) { removeSelectionToolbar(pos); return; }
       const scale = mounted[pos] ? mounted[pos].scale : 1;
       const b = selectionBounds(pos, groupSel.layerId, groupSel.ids);
-      console.log('[sel-toolbar-debug] drawSelectionOverlay', { pos, scale, b, groupSelIds: Array.from(groupSel.ids) }); // TODO(임시): 버튼 미표시 진단용, 원인 확인 후 제거
       if (!b) { removeSelectionToolbar(pos); return; }
       ctx.save();
       ctx.strokeStyle = 'rgba(232,64,28,0.9)';
@@ -1156,7 +1155,6 @@
     function showSelectionToolbar(pos, b, scale) {
       removeSelectionToolbar(pos);
       const wrap = document.getElementById('elwrap-' + pos);
-      console.log('[sel-toolbar-debug] showSelectionToolbar', { pos, wrapFound: !!wrap, left: b.minX * scale - 5, top: Math.max(0, b.minY * scale - 5 - 38) }); // TODO(임시): 진단용, 원인 확인 후 제거
       if (!wrap) return;
       const toolbar = document.createElement('div');
       toolbar.className = 'sel-toolbar';
@@ -1171,7 +1169,6 @@
       btn.addEventListener('click', () => deleteSelectedGroup());
       toolbar.appendChild(btn);
       wrap.appendChild(toolbar);
-      console.log('[sel-toolbar-debug] toolbar appended', { childCount: wrap.children.length, computedDisplay: getComputedStyle(toolbar).display, computedPointerEvents: getComputedStyle(toolbar).pointerEvents, rect: toolbar.getBoundingClientRect() }); // TODO(임시): 진단용, 원인 확인 후 제거
     }
     function clearSelection() {
       const pos = groupSel ? groupSel.pos : null;
