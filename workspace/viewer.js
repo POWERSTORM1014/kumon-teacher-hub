@@ -261,14 +261,24 @@ async function buildThumbs() {
 }
 
 let dragTargetInfo = null;
+// 원본(subjects/archives) 뷰어의 이 제스처는 터치/펜만 처리하고(500ms 길게 누르면
+// "무장" → 드래그 또는 컨텍스트 메뉴) 마우스는 처음부터 빠져 있었다 — 마우스는 이미
+// 우클릭(oncontextmenu)으로 컨텍스트 메뉴를 열 수 있으니 아마 의도적으로 뺐을
+// 것이다. "나의 폴더"는 마우스로도 드래그 재정렬이 되어야 하므로 여기(workspace만)
+// 마우스를 추가한다: 마우스는 스크롤과 충돌할 일이 없어 500ms 대기 없이 곧바로
+// "무장" 상태로 두고, 이동 거리(dist>6)만으로 드래그 여부를 가른다 — 그래서 제자리
+// 클릭(이동 없음)은 그대로 goToPage로 이어지고, 실제로 끌었을 때만 드래그로 처리된다.
 function initThumbGesture(item, pos) {
   const entry = Engine.PageOrder.getOrderEntry(pos);
   const canDrag = !!(entry && entry.kind === 'inserted');
-  let timer = null, armed = false, dragging = false, pointerId = null, startX = 0, startY = 0;
+  let timer = null, armed = false, dragging = false, pointerId = null, startX = 0, startY = 0, isMouse = false;
   item.addEventListener('pointerdown', e => {
-    if (e.pointerType !== 'touch' && e.pointerType !== 'pen') return;
-    pointerId = e.pointerId; armed = false; dragging = false; startX = e.clientX; startY = e.clientY;
-    timer = setTimeout(() => { armed = true; if (canDrag) item.setPointerCapture(pointerId); }, 500);
+    if (e.pointerType !== 'touch' && e.pointerType !== 'pen' && e.pointerType !== 'mouse') return;
+    if (e.pointerType === 'mouse' && e.button !== 0) return; // 오른쪽 버튼은 oncontextmenu가 이미 처리
+    isMouse = e.pointerType === 'mouse';
+    pointerId = e.pointerId; armed = isMouse; dragging = false; startX = e.clientX; startY = e.clientY;
+    if (isMouse) { if (canDrag) item.setPointerCapture(pointerId); }
+    else timer = setTimeout(() => { armed = true; if (canDrag) item.setPointerCapture(pointerId); }, 500);
   });
   item.addEventListener('pointermove', e => {
     if (pointerId === null || e.pointerId !== pointerId) return;
@@ -280,9 +290,14 @@ function initThumbGesture(item, pos) {
   function endGesture(e) {
     if (pointerId === null || (e && e.pointerId !== pointerId)) return;
     clearTimeout(timer);
-    if (dragging) { item.classList.remove('dragging'); commitThumbDragMove(pos); clearDragOverIndicators(); }
-    else if (armed) { item.dataset.suppressClick = '1'; openPageContextMenu(pos, e ? e.clientX : startX, e ? e.clientY : startY); }
-    pointerId = null; armed = false; dragging = false;
+    if (dragging) {
+      item.classList.remove('dragging'); commitThumbDragMove(pos); clearDragOverIndicators();
+      item.dataset.suppressClick = '1'; // 드래그 뒤에 이어질 수 있는 클릭이 페이지 이동으로 오작동하지 않게 한다(마우스 경로에서 특히 필요)
+    } else if (armed && !isMouse) {
+      // 마우스는 길게 눌러도 컨텍스트 메뉴를 열지 않는다 — 우클릭이 이미 그 역할을 한다.
+      item.dataset.suppressClick = '1'; openPageContextMenu(pos, e ? e.clientX : startX, e ? e.clientY : startY);
+    }
+    pointerId = null; armed = false; dragging = false; isMouse = false;
   }
   item.addEventListener('pointerup', endGesture);
   item.addEventListener('pointercancel', endGesture);
