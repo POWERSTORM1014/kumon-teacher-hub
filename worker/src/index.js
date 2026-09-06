@@ -28,6 +28,14 @@ function isSafeKey(id) {
   return typeof id === 'string' && /^[a-zA-Z0-9_-]+$/.test(id) && id.length <= 200;
 }
 
+// 폴더 name/책 title은 사용자가 자유롭게 짓는 표시용 텍스트라 isSafeKey로 검증하지
+// 않는다(한글 등 자유 텍스트 허용) — KV 키가 아니라 값으로만 저장되기 때문.
+function isValidName(name) {
+  return typeof name === 'string' && name.trim().length > 0 && name.trim().length <= 100;
+}
+function genFolderId() { return 'folder_' + crypto.randomUUID().replace(/-/g, '').slice(0, 12); }
+function genBookId() { return 'personal_' + crypto.randomUUID().replace(/-/g, '').slice(0, 12); }
+
 // device는 사용자가 자유롭게 붙이는 기기 이름(한글 등 자유 텍스트)이라 isSafeKey로
 // 검증하지 않는다 — KV 키가 아니라 값으로만 저장되므로 URL/키 안전성 문제가 없다.
 function isValidDevice(d) {
@@ -57,6 +65,60 @@ function json(data, status, origin) {
     status: status || 200,
     headers: { 'Content-Type': 'application/json', ...corsHeaders(origin) }
   });
+}
+
+// "나의 폴더" 폴더/책 배열은 KV 키 하나에 배열 전체를 담는다(로컬 server.js의
+// data/workspace/*.json과 동일한 모델) — 부분 갱신 API가 없으니 읽고 통째로 다시 쓴다.
+async function readWorkspaceArray(env, kvKey) {
+  const raw = await env.KUMON_LAYERS.get(kvKey);
+  if (!raw) return [];
+  try { const j = JSON.parse(raw); return Array.isArray(j) ? j : []; } catch (e) { return []; }
+}
+async function writeWorkspaceArray(env, kvKey, arr) {
+  await env.KUMON_LAYERS.put(kvKey, JSON.stringify(arr));
+}
+
+// KV/R2 둘 다 list()가 최대 1000개까지만 한 번에 돌려주므로 cursor로 끝까지 돈다 —
+// 이 앱 규모(개인 필기책 한 권당 페이지는 MAX_INSERTED_PAGES=100장 이하)에서는
+// 사실상 한 번이면 끝나지만, 정확성을 위해 페이지네이션을 생략하지 않는다.
+async function listAllKeys(kv, prefix) {
+  const keys = [];
+  let cursor;
+  for (;;) {
+    const res = await kv.list({ prefix, cursor });
+    keys.push(...res.keys.map(k => k.name));
+    if (res.list_complete || !res.cursor) break;
+    cursor = res.cursor;
+  }
+  return keys;
+}
+async function listAllR2Keys(bucket, prefix) {
+  const keys = [];
+  let cursor;
+  for (;;) {
+    const res = await bucket.list({ prefix, cursor });
+    keys.push(...res.objects.map(o => o.key));
+    if (res.truncated === false || !res.cursor) break;
+    cursor = res.cursor;
+  }
+  return keys;
+}
+
+// 폴더·책 삭제(연쇄 삭제) 시 정리하는 범위 — 여기 하나로 고정해서 folder/book 삭제
+// 라우트 둘 다 같은 함수를 부른다: layer:<bookId>__* 전부, pageorder:<bookId>,
+// lock:<bookId>:* 전부(KV), user-pages/<bookId>/ 전체(R2). 이 중 하나라도 빠지면
+// "삭제했는데 KV/R2에 흔적이 남는" 문제가 생기므로, 새로 저장 위치를 추가할 때는
+// 반드시 이 함수도 같이 고칠 것(로컬 server.js의 cascadeDeleteBookData와 대칭 유지).
+async function cascadeDeleteBookData(env, bookId) {
+  const layerKeys = await listAllKeys(env.KUMON_LAYERS, 'layer:' + bookId + '__');
+  const lockKeys = await listAllKeys(env.KUMON_LAYERS, 'lock:' + bookId + ':');
+  await Promise.all([
+    env.KUMON_LAYERS.delete('pageorder:' + bookId),
+    ...layerKeys.map(k => env.KUMON_LAYERS.delete(k)),
+    ...lockKeys.map(k => env.KUMON_LAYERS.delete(k))
+  ]);
+  const r2Keys = await listAllR2Keys(env.LESSON_NOTES, 'user-pages/' + bookId + '/');
+  await Promise.all(r2Keys.map(k => env.LESSON_NOTES.delete(k)));
 }
 
 export default {
@@ -127,11 +189,15 @@ export default {
       }
 
       // POST /api/upload — 이미지/오디오·영상 dataURL을 R2(kumon-lesson-notes)에 저장
+      //
+      // dest:'workspace-page'는 "나의 폴더" 사진 페이지 전용 예외 경로다 — 기본 images/
+      // 대신 user-pages/<bookId>/<localPageId><ext>에 저장한다. bookId별로 접두어를
+      // 나누는 이유는 책/폴더 삭제 시 이 접두어 하나로 R2.list()해서 통째로 지울 수
+      // 있어야 하기 때문(cascadeDeleteBookData 참고) — images/처럼 섞여 있으면 불가능하다.
       if (request.method === 'POST' && parts.length === 2 && parts[0] === 'api' && parts[1] === 'upload') {
         const body = await request.json().catch(() => null);
-        const { kind, pageId, dataUrl, filename } = body || {};
+        const { kind, pageId, dataUrl, filename, dest, bookId: wsBookId, localPageId } = body || {};
         if (kind !== 'image' && kind !== 'audio') return json({ error: 'invalid kind' }, 400, origin);
-        if (!isSafeKey(pageId)) return json({ error: 'invalid pageId' }, 400, origin);
         const m = /^data:([^;,]+)(?:;[^,]*)?,(.+)$/.exec(dataUrl || '');
         if (!m) return json({ error: 'invalid dataUrl' }, 400, origin);
 
@@ -144,13 +210,123 @@ export default {
           return json({ error: 'invalid base64' }, 400, origin);
         }
         if (!bytes.length || bytes.length > MAX_UPLOAD_BYTES) return json({ error: 'file too large' }, 413, origin);
-
-        const subdir = kind === 'image' ? 'images' : 'audio';
         const ext = safeExt(filename, m[1]);
+
+        if (dest === 'workspace-page') {
+          if (kind !== 'image') return json({ error: 'workspace-page only supports image' }, 400, origin);
+          if (!isSafeKey(wsBookId) || !isSafeKey(localPageId)) return json({ error: 'invalid bookId/localPageId' }, 400, origin);
+          const key = `user-pages/${wsBookId}/${localPageId}${ext}`;
+          await env.LESSON_NOTES.put(key, bytes, { httpMetadata: { contentType: m[1] } });
+          return json({ ok: true, path: env.LESSON_NOTES_PUBLIC_URL + '/' + key }, 200, origin);
+        }
+
+        if (!isSafeKey(pageId)) return json({ error: 'invalid pageId' }, 400, origin);
+        const subdir = kind === 'image' ? 'images' : 'audio';
         const key = `${subdir}/${pageId}_${Date.now()}_${Math.random().toString(36).slice(2, 8)}${ext}`;
         await env.LESSON_NOTES.put(key, bytes, { httpMetadata: { contentType: m[1] } });
         const publicUrl = env.LESSON_NOTES_PUBLIC_URL + '/' + key;
         return json({ ok: true, path: publicUrl }, 200, origin);
+      }
+
+      // ══ "나의 폴더"(워크스페이스) — 폴더/책 목록. KV workspace:folders / workspace:books
+      // 키 하나씩에 배열 전체를 저장한다(부분 갱신 없음 — 두 기기가 동시에 만들면
+      // 나중에 쓴 쪽이 앞선 쪽을 덮어쓸 수 있는 게 알려진 한계, OPERATIONS.md 참고).
+      // 책의 실제 페이지 내용(필기/순서)은 이 배열에 없다 — book.id가 곧 bookId이고
+      // page-order/layer 키를 기존 방식 그대로 따른다.
+      if (parts.length === 2 && parts[0] === 'api' && parts[1] === 'workspace') return json({ error: 'not found' }, 404, origin);
+
+      if (parts.length === 3 && parts[0] === 'api' && parts[1] === 'workspace' && parts[2] === 'folders') {
+        if (request.method === 'GET') {
+          return json({ folders: await readWorkspaceArray(env, 'workspace:folders') }, 200, origin);
+        }
+        if (request.method === 'POST') {
+          const body = await request.json().catch(() => null);
+          const name = body && body.name;
+          if (!isValidName(name)) return json({ error: 'invalid name' }, 400, origin);
+          const folders = await readWorkspaceArray(env, 'workspace:folders');
+          const folder = { id: genFolderId(), name: name.trim(), createdAt: new Date().toISOString() };
+          folders.push(folder);
+          await writeWorkspaceArray(env, 'workspace:folders', folders);
+          return json({ ok: true, folder }, 200, origin);
+        }
+      }
+
+      if (parts.length === 4 && parts[0] === 'api' && parts[1] === 'workspace' && parts[2] === 'folders') {
+        const folderId = parts[3];
+        if (!isSafeKey(folderId)) return json({ error: 'invalid folderId' }, 400, origin);
+
+        if (request.method === 'PUT') {
+          const body = await request.json().catch(() => null);
+          const name = body && body.name;
+          if (!isValidName(name)) return json({ error: 'invalid name' }, 400, origin);
+          const folders = await readWorkspaceArray(env, 'workspace:folders');
+          const folder = folders.find(f => f.id === folderId);
+          if (!folder) return json({ error: 'not found' }, 404, origin);
+          folder.name = name.trim();
+          await writeWorkspaceArray(env, 'workspace:folders', folders);
+          return json({ ok: true, folder }, 200, origin);
+        }
+
+        if (request.method === 'DELETE') {
+          const folders = await readWorkspaceArray(env, 'workspace:folders');
+          if (!folders.some(f => f.id === folderId)) return json({ error: 'not found' }, 404, origin);
+          const books = await readWorkspaceArray(env, 'workspace:books');
+          const toDelete = books.filter(b => b.folderId === folderId);
+          for (const b of toDelete) await cascadeDeleteBookData(env, b.id);
+          await writeWorkspaceArray(env, 'workspace:books', books.filter(b => b.folderId !== folderId));
+          await writeWorkspaceArray(env, 'workspace:folders', folders.filter(f => f.id !== folderId));
+          return json({ ok: true, deletedBooks: toDelete.length }, 200, origin);
+        }
+      }
+
+      if (parts.length === 3 && parts[0] === 'api' && parts[1] === 'workspace' && parts[2] === 'books') {
+        if (request.method === 'GET') {
+          const folderId = url.searchParams.get('folderId');
+          const books = await readWorkspaceArray(env, 'workspace:books');
+          return json({ books: folderId ? books.filter(b => b.folderId === folderId) : books }, 200, origin);
+        }
+        if (request.method === 'POST') {
+          const body = await request.json().catch(() => null);
+          const { folderId, title } = body || {};
+          if (!isSafeKey(folderId)) return json({ error: 'invalid folderId' }, 400, origin);
+          if (!isValidName(title)) return json({ error: 'invalid title' }, 400, origin);
+          const folders = await readWorkspaceArray(env, 'workspace:folders');
+          if (!folders.some(f => f.id === folderId)) return json({ error: 'folder not found' }, 404, origin);
+          const books = await readWorkspaceArray(env, 'workspace:books');
+          const book = { id: genBookId(), folderId, title: title.trim(), createdAt: new Date().toISOString() };
+          books.push(book);
+          await writeWorkspaceArray(env, 'workspace:books', books);
+          // 페이지 0개로 page-order를 미리 만들어둔다 — book 생성과 page-order 생성이
+          // 항상 같이 맞아떨어지게 해서(찾아보면 found:false와 동치이긴 하지만)
+          // 뷰어가 첫 진입 시 바로 빈 책으로 열리게 한다.
+          await env.KUMON_LAYERS.put('pageorder:' + book.id, JSON.stringify({ bookId: book.id, order: [], savedAt: new Date().toISOString() }));
+          return json({ ok: true, book }, 200, origin);
+        }
+      }
+
+      if (parts.length === 4 && parts[0] === 'api' && parts[1] === 'workspace' && parts[2] === 'books') {
+        const bookId = parts[3];
+        if (!isSafeKey(bookId)) return json({ error: 'invalid bookId' }, 400, origin);
+
+        if (request.method === 'PUT') {
+          const body = await request.json().catch(() => null);
+          const title = body && body.title;
+          if (!isValidName(title)) return json({ error: 'invalid title' }, 400, origin);
+          const books = await readWorkspaceArray(env, 'workspace:books');
+          const book = books.find(b => b.id === bookId);
+          if (!book) return json({ error: 'not found' }, 404, origin);
+          book.title = title.trim();
+          await writeWorkspaceArray(env, 'workspace:books', books);
+          return json({ ok: true, book }, 200, origin);
+        }
+
+        if (request.method === 'DELETE') {
+          const books = await readWorkspaceArray(env, 'workspace:books');
+          if (!books.some(b => b.id === bookId)) return json({ error: 'not found' }, 404, origin);
+          await cascadeDeleteBookData(env, bookId);
+          await writeWorkspaceArray(env, 'workspace:books', books.filter(b => b.id !== bookId));
+          return json({ ok: true }, 200, origin);
+        }
       }
 
       // /api/lock/:bookId/:page/heartbeat — 먼저 검사해야 함(5조각, 아래 4조각 라우트보다 길다)

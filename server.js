@@ -12,6 +12,7 @@ const express = require('express');
 const path = require('path');
 const fs = require('fs');
 const fsp = fs.promises;
+const crypto = require('crypto');
 
 const app = express();
 const PORT = process.env.PORT || 5500;
@@ -22,10 +23,14 @@ const IMAGES_DIR = path.join(ROOT, 'data', 'images');
 const AUDIO_DIR = path.join(ROOT, 'data', 'audio');
 const PAGE_ORDER_DIR = path.join(ROOT, 'data', 'page-order');
 const PAGE_ORDER_BACKUP_DIR = path.join(PAGE_ORDER_DIR, 'backup');
+const WORKSPACE_DIR = path.join(ROOT, 'data', 'workspace'); // "나의 폴더" — folders.json/books.json (KV의 workspace:folders/workspace:books에 대응)
+const WORKSPACE_PAGES_DIR = path.join(ROOT, 'data', 'user-pages'); // 사진 페이지 원본(book별 하위 폴더) — R2 user-pages/<bookId>/에 대응
+const WORKSPACE_FOLDERS_FILE = path.join(WORKSPACE_DIR, 'folders.json');
+const WORKSPACE_BOOKS_FILE = path.join(WORKSPACE_DIR, 'books.json');
 const MAX_BACKUPS_PER_KEY = 10;
 const MAX_UPLOAD_BYTES = 25 * 1024 * 1024;
 
-[LAYERS_DIR, LAYERS_BACKUP_DIR, IMAGES_DIR, AUDIO_DIR, PAGE_ORDER_DIR, PAGE_ORDER_BACKUP_DIR].forEach(d => fs.mkdirSync(d, { recursive: true }));
+[LAYERS_DIR, LAYERS_BACKUP_DIR, IMAGES_DIR, AUDIO_DIR, PAGE_ORDER_DIR, PAGE_ORDER_BACKUP_DIR, WORKSPACE_DIR, WORKSPACE_PAGES_DIR].forEach(d => fs.mkdirSync(d, { recursive: true }));
 
 app.use(express.json({ limit: '30mb' })); // 이미지/오디오 dataURL(base64)도 여유있게 받는다
 app.use(express.static(ROOT));
@@ -100,15 +105,37 @@ function safeExt(filename, mime) {
 
 // 이미지/오디오·영상 첨부 파일 저장 — 클라이언트가 dataURL을 보내면 여기서 파일로 풀어
 // data/images 또는 data/audio에 저장하고, 상대 경로만 돌려준다(레이어 JSON에는 경로만 남김).
+//
+// dest:'workspace-page'는 "나의 폴더" 사진 페이지 전용 예외 경로다 — 기본 images/ 대신
+// data/user-pages/<bookId>/<localPageId><ext>에 저장한다. bookId별로 폴더를 나누는 이유는
+// 책/폴더 삭제 시 "이 책에 딸린 사진 전부"를 접두어 하나로 통째로 지울 수 있어야 하기
+// 때문(WORKSPACE_DIR 삭제 로직 참고) — images/ 처럼 한 폴더에 다 섞여 있으면 불가능하다.
 app.post('/api/upload', async (req, res) => {
-  const { kind, pageId, dataUrl, filename } = req.body || {};
+  const { kind, pageId, dataUrl, filename, dest, bookId: wsBookId, localPageId } = req.body || {};
   if (kind !== 'image' && kind !== 'audio') return res.status(400).json({ error: 'invalid kind' });
-  if (!isSafeKey(pageId)) return res.status(400).json({ error: 'invalid pageId' });
   const m = /^data:([^;,]+)(?:;[^,]*)?,(.+)$/.exec(dataUrl || '');
   if (!m) return res.status(400).json({ error: 'invalid dataUrl' });
   let buf;
   try { buf = Buffer.from(m[2], 'base64'); } catch (e) { return res.status(400).json({ error: 'invalid base64' }); }
   if (!buf.length || buf.length > MAX_UPLOAD_BYTES) return res.status(413).json({ error: 'file too large' });
+
+  if (dest === 'workspace-page') {
+    if (kind !== 'image') return res.status(400).json({ error: 'workspace-page only supports image' });
+    if (!isSafeKey(wsBookId) || !isSafeKey(localPageId)) return res.status(400).json({ error: 'invalid bookId/localPageId' });
+    const dir = path.join(WORKSPACE_PAGES_DIR, wsBookId);
+    const name = `${localPageId}${safeExt(filename, m[1])}`;
+    try {
+      await fsp.mkdir(dir, { recursive: true });
+      await fsp.writeFile(path.join(dir, name), buf);
+      res.json({ ok: true, path: `/data/user-pages/${wsBookId}/${name}` });
+    } catch (e) {
+      console.error('[upload:workspace-page]', wsBookId, localPageId, e);
+      res.status(500).json({ error: 'save failed' });
+    }
+    return;
+  }
+
+  if (!isSafeKey(pageId)) return res.status(400).json({ error: 'invalid pageId' });
   const dir = kind === 'image' ? IMAGES_DIR : AUDIO_DIR;
   const subdir = kind === 'image' ? 'images' : 'audio';
   const name = `${pageId}_${Date.now()}_${Math.random().toString(36).slice(2, 8)}${safeExt(filename, m[1])}`;
@@ -173,6 +200,149 @@ app.post('/api/page-order/:bookId', async (req, res) => {
     console.error('[page-order:post]', bookId, e);
     res.status(500).json({ error: 'save failed' });
   }
+});
+
+/* ══════════════════════════════════════════════════════════════
+   "나의 폴더"(워크스페이스) — 사용자가 실시간으로 만드는 폴더/책.
+   KV의 workspace:folders / workspace:books 두 키(전체 배열 하나씩)에 대응하는
+   로컬 파일 버전 — data/workspace/folders.json, data/workspace/books.json에
+   배열 전체를 그대로 읽고 다시 쓴다(부분 갱신 없음). 두 기기가 동시에 폴더/책을
+   만들면 나중에 쓴 쪽이 앞선 쪽을 덮어쓸 수 있다 — 알려진 한계이며 지금은
+   허용한다(OPERATIONS.md 참고). 책의 실제 페이지 내용(필기/순서)은 이 배열에
+   전혀 들어가지 않는다 — book.id가 곧 bookId이고, 그 페이지 구성/필기는 기존
+   page-order/<bookId>.json, layers/<bookId>__<page>.json을 그대로 따른다.
+════════════════════════════════════════════════════════════════ */
+async function readJsonArray(file) {
+  try { const raw = await fsp.readFile(file, 'utf8'); const j = JSON.parse(raw); return Array.isArray(j) ? j : []; }
+  catch (e) { if (e.code === 'ENOENT') return []; throw e; }
+}
+async function writeJsonArray(file, arr) { await fsp.writeFile(file, JSON.stringify(arr), 'utf8'); }
+function genFolderId() { return 'folder_' + crypto.randomBytes(6).toString('hex'); }
+function genBookId() { return 'personal_' + crypto.randomBytes(6).toString('hex'); }
+function isValidName(name) { return typeof name === 'string' && name.trim().length > 0 && name.trim().length <= 100; }
+
+// 폴더·책 삭제(연쇄 삭제) 시 정리하는 범위 — 여기 하나로 고정해서 folder/book
+// 삭제 라우트 둘 다 같은 함수를 부른다: layer:<bookId>__* 전부(+ 그 백업),
+// page-order/<bookId>(+ 백업), lock:<bookId>:* 전부(인메모리), user-pages/<bookId>/
+// 디렉토리 전체. 이 중 하나라도 빠지면 "삭제했는데 KV/디스크에 흔적이 남는" 문제가
+// 생기므로, 새로 저장 위치를 추가할 때는 반드시 이 함수도 같이 고칠 것.
+async function cascadeDeleteBookData(bookId) {
+  await fsp.unlink(path.join(PAGE_ORDER_DIR, bookId + '.json')).catch(() => {});
+  for (const dir of [LAYERS_DIR, LAYERS_BACKUP_DIR]) {
+    const prefix = bookId + '__';
+    const files = await fsp.readdir(dir).catch(() => []);
+    for (const f of files.filter(f => f.startsWith(prefix))) await fsp.unlink(path.join(dir, f)).catch(() => {});
+  }
+  {
+    const prefix = bookId + '_';
+    const files = await fsp.readdir(PAGE_ORDER_BACKUP_DIR).catch(() => []);
+    for (const f of files.filter(f => f.startsWith(prefix))) await fsp.unlink(path.join(PAGE_ORDER_BACKUP_DIR, f)).catch(() => {});
+  }
+  for (const key of Array.from(locks.keys())) if (key.startsWith(bookId + ':')) locks.delete(key);
+  await fsp.rm(path.join(WORKSPACE_PAGES_DIR, bookId), { recursive: true, force: true }).catch(() => {});
+}
+
+app.get('/api/workspace/folders', async (req, res) => {
+  try { res.json({ folders: await readJsonArray(WORKSPACE_FOLDERS_FILE) }); }
+  catch (e) { console.error('[workspace:folders:get]', e); res.status(500).json({ error: 'read failed' }); }
+});
+
+app.post('/api/workspace/folders', async (req, res) => {
+  const name = (req.body || {}).name;
+  if (!isValidName(name)) return res.status(400).json({ error: 'invalid name' });
+  try {
+    const folders = await readJsonArray(WORKSPACE_FOLDERS_FILE);
+    const folder = { id: genFolderId(), name: name.trim(), createdAt: new Date().toISOString() };
+    folders.push(folder);
+    await writeJsonArray(WORKSPACE_FOLDERS_FILE, folders);
+    res.json({ ok: true, folder });
+  } catch (e) { console.error('[workspace:folders:post]', e); res.status(500).json({ error: 'save failed' }); }
+});
+
+app.put('/api/workspace/folders/:folderId', async (req, res) => {
+  const { folderId } = req.params;
+  const name = (req.body || {}).name;
+  if (!isSafeKey(folderId)) return res.status(400).json({ error: 'invalid folderId' });
+  if (!isValidName(name)) return res.status(400).json({ error: 'invalid name' });
+  try {
+    const folders = await readJsonArray(WORKSPACE_FOLDERS_FILE);
+    const folder = folders.find(f => f.id === folderId);
+    if (!folder) return res.status(404).json({ error: 'not found' });
+    folder.name = name.trim(); // id는 그대로 — 이름만 바꾼다
+    await writeJsonArray(WORKSPACE_FOLDERS_FILE, folders);
+    res.json({ ok: true, folder });
+  } catch (e) { console.error('[workspace:folders:put]', folderId, e); res.status(500).json({ error: 'save failed' }); }
+});
+
+app.delete('/api/workspace/folders/:folderId', async (req, res) => {
+  const { folderId } = req.params;
+  if (!isSafeKey(folderId)) return res.status(400).json({ error: 'invalid folderId' });
+  try {
+    const folders = await readJsonArray(WORKSPACE_FOLDERS_FILE);
+    if (!folders.some(f => f.id === folderId)) return res.status(404).json({ error: 'not found' });
+    const books = await readJsonArray(WORKSPACE_BOOKS_FILE);
+    const toDelete = books.filter(b => b.folderId === folderId);
+    for (const b of toDelete) await cascadeDeleteBookData(b.id);
+    await writeJsonArray(WORKSPACE_BOOKS_FILE, books.filter(b => b.folderId !== folderId));
+    await writeJsonArray(WORKSPACE_FOLDERS_FILE, folders.filter(f => f.id !== folderId));
+    res.json({ ok: true, deletedBooks: toDelete.length });
+  } catch (e) { console.error('[workspace:folders:delete]', folderId, e); res.status(500).json({ error: 'delete failed' }); }
+});
+
+app.get('/api/workspace/books', async (req, res) => {
+  const folderId = req.query.folderId;
+  try {
+    const books = await readJsonArray(WORKSPACE_BOOKS_FILE);
+    res.json({ books: folderId ? books.filter(b => b.folderId === folderId) : books });
+  } catch (e) { console.error('[workspace:books:get]', e); res.status(500).json({ error: 'read failed' }); }
+});
+
+app.post('/api/workspace/books', async (req, res) => {
+  const { folderId, title } = req.body || {};
+  if (!isSafeKey(folderId)) return res.status(400).json({ error: 'invalid folderId' });
+  if (!isValidName(title)) return res.status(400).json({ error: 'invalid title' });
+  try {
+    const folders = await readJsonArray(WORKSPACE_FOLDERS_FILE);
+    if (!folders.some(f => f.id === folderId)) return res.status(404).json({ error: 'folder not found' });
+    const books = await readJsonArray(WORKSPACE_BOOKS_FILE);
+    const book = { id: genBookId(), folderId, title: title.trim(), createdAt: new Date().toISOString() };
+    books.push(book);
+    await writeJsonArray(WORKSPACE_BOOKS_FILE, books);
+    // 페이지 0개 상태로 page-order를 미리 만들어둔다 — 뷰어가 첫 진입 시 "PDF 없음"을
+    // 서버에 물어볼 필요 없이 바로 빈 책으로 열리게 하기 위함(찾아보면 found:false와도
+    // 동치이지만, 명시적으로 만들어두면 book 생성 시점과 page-order 생성 시점이 항상
+    // 같이 맞아떨어져서 추적하기 쉽다).
+    const file = path.join(PAGE_ORDER_DIR, book.id + '.json');
+    await fsp.writeFile(file, JSON.stringify({ bookId: book.id, order: [], savedAt: new Date().toISOString() }), 'utf8');
+    res.json({ ok: true, book });
+  } catch (e) { console.error('[workspace:books:post]', e); res.status(500).json({ error: 'save failed' }); }
+});
+
+app.put('/api/workspace/books/:bookId', async (req, res) => {
+  const { bookId } = req.params;
+  const title = (req.body || {}).title;
+  if (!isSafeKey(bookId)) return res.status(400).json({ error: 'invalid bookId' });
+  if (!isValidName(title)) return res.status(400).json({ error: 'invalid title' });
+  try {
+    const books = await readJsonArray(WORKSPACE_BOOKS_FILE);
+    const book = books.find(b => b.id === bookId);
+    if (!book) return res.status(404).json({ error: 'not found' });
+    book.title = title.trim(); // id는 그대로 — 제목만 바꾼다
+    await writeJsonArray(WORKSPACE_BOOKS_FILE, books);
+    res.json({ ok: true, book });
+  } catch (e) { console.error('[workspace:books:put]', bookId, e); res.status(500).json({ error: 'save failed' }); }
+});
+
+app.delete('/api/workspace/books/:bookId', async (req, res) => {
+  const { bookId } = req.params;
+  if (!isSafeKey(bookId)) return res.status(400).json({ error: 'invalid bookId' });
+  try {
+    const books = await readJsonArray(WORKSPACE_BOOKS_FILE);
+    if (!books.some(b => b.id === bookId)) return res.status(404).json({ error: 'not found' });
+    await cascadeDeleteBookData(bookId);
+    await writeJsonArray(WORKSPACE_BOOKS_FILE, books.filter(b => b.id !== bookId));
+    res.json({ ok: true });
+  } catch (e) { console.error('[workspace:books:delete]', bookId, e); res.status(500).json({ error: 'delete failed' }); }
 });
 
 // 편집 잠금 조회 — 없거나 5분 지났으면 잠기지 않은 것으로 본다.

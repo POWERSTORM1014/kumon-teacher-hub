@@ -65,6 +65,31 @@ body{font-family:var(--font);background:var(--bg);color:var(--ink);min-height:10
 .subject-card.coming-soon{opacity:.55;cursor:default;}
 .subject-card.coming-soon:hover{transform:none;}
 .sc-badge{position:absolute;top:12px;right:12px;font-size:9px;font-weight:700;background:rgba(255,255,255,0.25);padding:3px 8px;border-radius:10px;}
+
+/* "나의 폴더" — subjects/archives의 색색 타일과 달리 사용자가 만든 폴더라 정해진
+   색이 없다. surface/border 톤의 중립 카드로 표시하고, 이름변경/삭제 아이콘을
+   카드 우상단에 얹는다. */
+.folder-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(180px,1fr));gap:16px;}
+.folder-card{position:relative;border-radius:var(--radius);background:var(--surface);border:1px solid var(--border);padding:20px 16px 16px;cursor:pointer;box-shadow:var(--shadow);transition:transform .15s,box-shadow .15s;min-height:110px;display:flex;flex-direction:column;justify-content:flex-end;gap:8px;}
+.folder-card:hover{transform:translateY(-3px);box-shadow:var(--shadow-lg);}
+.folder-card .fc-icon{font-size:26px;}
+.folder-card .fc-name{font-size:14.5px;font-weight:700;color:var(--ink);overflow:hidden;text-overflow:ellipsis;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;}
+.folder-card .fc-actions{position:absolute;top:10px;right:10px;display:flex;gap:4px;}
+.fc-icon-btn{width:24px;height:24px;border-radius:6px;border:none;background:var(--bg);color:var(--ink-mid);font-size:11px;cursor:pointer;display:flex;align-items:center;justify-content:center;}
+.fc-icon-btn:hover{background:var(--accent-light);color:var(--accent);}
+.add-tile{border:1.5px dashed var(--border);border-radius:var(--radius);background:none;color:var(--ink-mid);min-height:110px;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:6px;cursor:pointer;font-family:var(--font);font-size:13px;font-weight:700;}
+.add-tile:hover{border-color:var(--accent);color:var(--accent);background:var(--accent-light);}
+.add-tile .at-icon{font-size:22px;}
+
+/* 폴더 이름 입력 팝업 */
+#name-prompt-modal{position:fixed;inset:0;z-index:900;background:rgba(0,0,0,0.5);display:none;align-items:center;justify-content:center;padding:16px;}
+#name-prompt-modal.open{display:flex;}
+.np-box{background:var(--surface);border-radius:14px;width:min(320px,100%);padding:20px;box-shadow:var(--shadow-lg);}
+.np-title{font-size:14px;font-weight:700;margin-bottom:12px;}
+.np-input{width:100%;padding:10px 12px;border-radius:8px;border:1.5px solid var(--border);background:var(--bg);color:var(--ink);font-family:var(--font);font-size:13px;margin-bottom:14px;}
+.np-actions{display:flex;justify-content:flex-end;gap:8px;}
+.np-btn{padding:8px 16px;border-radius:8px;border:1.5px solid var(--border);background:none;color:var(--ink);font-family:var(--font);font-size:12.5px;cursor:pointer;}
+.np-btn.primary{background:var(--accent);border-color:var(--accent);color:#fff;}
 </style>
 </head>
 <body>
@@ -100,6 +125,22 @@ body{font-family:var(--font);background:var(--bg);color:var(--ink);min-height:10
     <div class="section-title">🗂️ 자료실</div>
     <div class="subject-grid" id="archive-grid"></div>
   </div>
+
+  <div class="section">
+    <div class="section-title">📁 나의 폴더</div>
+    <div class="folder-grid" id="folder-grid"></div>
+  </div>
+</div>
+
+<div id="name-prompt-modal">
+  <div class="np-box">
+    <div class="np-title" id="np-title">이름</div>
+    <input type="text" class="np-input" id="np-input" maxlength="60" onkeydown="if(event.key==='Enter'){event.preventDefault();closeNamePrompt(true);} if(event.key==='Escape'){closeNamePrompt(false);}">
+    <div class="np-actions">
+      <button class="np-btn" onclick="closeNamePrompt(false)">취소</button>
+      <button class="np-btn primary" onclick="closeNamePrompt(true)">확인</button>
+    </div>
+  </div>
 </div>
 
 <script src="shared/annotation-engine.js"></script>
@@ -107,7 +148,10 @@ body{font-family:var(--font);background:var(--bg);color:var(--ink);min-height:10
 const Engine = AnnotationEngine;
 let subjects = [];
 let archives = [];
+let folders = [];
 let searchDataCache = null;
+
+function escapeHtml(s) { return (s || '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c])); }
 
 function toggleDark() {
   const on = document.body.classList.toggle('dark');
@@ -142,6 +186,84 @@ function renderArchiveGrid() {
     </div>`).join('');
 }
 
+/* ── "나의 폴더" — subjects.json/archives.json과 달리 정적 파일이 아니라 KV 기반
+   동적 데이터라, 페이지를 열 때마다 Engine.Storage.listFolders()로 매번 새로
+   받아온다(정적 캐시 대상 아님). 여기서 직접 fetch를 호출하지 않는 이유는
+   annotation-engine.js의 "fetch는 Storage 모듈 안에서만" 원칙 때문이다. ── */
+async function loadFolders() {
+  folders = await Engine.Storage.listFolders();
+  renderFolderGrid();
+}
+function renderFolderGrid() {
+  const grid = document.getElementById('folder-grid');
+  const addTile = `<button class="add-tile" onclick="createFolderUI()"><span class="at-icon">➕</span>새 폴더 만들기</button>`;
+  if (!folders.length) {
+    grid.innerHTML = addTile;
+    const hint = document.createElement('div');
+    hint.className = 'empty-hint'; hint.style.gridColumn = '1/-1';
+    hint.textContent = '아직 만든 폴더가 없어요 — 위 버튼으로 첫 폴더를 만들어보세요.';
+    grid.appendChild(hint);
+    return;
+  }
+  // 카드 onclick에는 folder.id(서버가 만든 hex 접미어라 안전)만 넘긴다 — 폴더 이름은
+  // 사용자가 자유 입력한 텍스트라 그대로 JS 문자열 리터럴에 꽂으면 따옴표 등으로
+  // 코드가 깨지거나 삽입될 수 있다. 이름이 필요한 곳(openFolder)은 folders 배열에서
+  // id로 다시 찾아 쓴다.
+  grid.innerHTML = folders.map(f => `
+    <div class="folder-card" onclick="openFolder('${f.id}')">
+      <div class="fc-actions">
+        <button class="fc-icon-btn" onclick="event.stopPropagation();renameFolderUI('${f.id}')" title="이름 바꾸기">✎</button>
+        <button class="fc-icon-btn" onclick="event.stopPropagation();deleteFolderUI('${f.id}')" title="삭제">🗑</button>
+      </div>
+      <div class="fc-icon">📁</div>
+      <div class="fc-name">${escapeHtml(f.name)}</div>
+    </div>`).join('') + addTile;
+}
+function openFolder(folderId) {
+  const f = folders.find(x => x.id === folderId);
+  location.href = 'workspace/folder.html?folder=' + encodeURIComponent(folderId) + '&name=' + encodeURIComponent(f ? f.name : '');
+}
+function createFolderUI() {
+  openNamePrompt('새 폴더 이름', '', async name => {
+    try { await Engine.Storage.createFolder(name); showToast('"' + name + '" 폴더를 만들었어요'); await loadFolders(); }
+    catch (e) { showToast('폴더를 만들지 못했어요 — 네트워크 상태를 확인해주세요'); }
+  });
+}
+function renameFolderUI(folderId) {
+  const f = folders.find(x => x.id === folderId); if (!f) return;
+  openNamePrompt('폴더 이름 변경', f.name, async name => {
+    try { await Engine.Storage.renameFolder(folderId, name); showToast('이름을 바꿨어요'); await loadFolders(); }
+    catch (e) { showToast('이름을 바꾸지 못했어요'); }
+  });
+}
+async function deleteFolderUI(folderId) {
+  const f = folders.find(x => x.id === folderId); if (!f) return;
+  const books = await Engine.Storage.listBooks(folderId);
+  const msg = books.length
+    ? `"${f.name}" 폴더 안의 자료 ${books.length}개가 모두 삭제됩니다. 계속할까요?\n되돌릴 수 없습니다.`
+    : `"${f.name}" 폴더를 삭제할까요?`;
+  if (!confirm(msg)) return;
+  try { await Engine.Storage.deleteFolder(folderId); showToast('삭제했어요'); await loadFolders(); }
+  catch (e) { showToast('삭제하지 못했어요 — 네트워크 상태를 확인해주세요'); }
+}
+
+/* ── 이름 입력 팝업(폴더 새로 만들기/이름 변경 공용) ── */
+let namePromptOnConfirm = null;
+function openNamePrompt(title, defaultValue, onConfirm) {
+  document.getElementById('np-title').textContent = title;
+  const input = document.getElementById('np-input'); input.value = defaultValue || '';
+  namePromptOnConfirm = onConfirm;
+  document.getElementById('name-prompt-modal').classList.add('open');
+  setTimeout(() => { input.focus(); input.select(); }, 50);
+}
+function closeNamePrompt(confirmed) {
+  document.getElementById('name-prompt-modal').classList.remove('open');
+  const cb = namePromptOnConfirm; namePromptOnConfirm = null;
+  if (!confirmed || !cb) return;
+  const name = document.getElementById('np-input').value.trim();
+  if (name) cb(name);
+}
+
 function renderSubjectGrid() {
   const grid = document.getElementById('subject-grid');
   grid.innerHTML = subjects.map(s => `
@@ -174,9 +296,10 @@ function renderRecent() {
   if (!recents.length) { grid.innerHTML = '<div class="empty-hint">아직 열어본 교재가 없어요 — 아래 과목에서 교재를 선택해보세요.</div>'; return; }
   grid.innerHTML = recents.slice(0, 2).map(r => {
     const subj = subjects.find(s => s.id === r.subjectId) || archives.find(a => a.id === r.subjectId);
+    const subjLabel = subj ? (subj.icon + ' ' + subj.name) : (r.subjectId === 'workspace' ? '📁 나의 폴더' : r.subjectId);
     return `<div class="recent-card" onclick="openRecent('${r.viewerPath}','${r.bookId}')">
-      <div class="rc-subject">${subj ? subj.icon + ' ' + subj.name : r.subjectId}</div>
-      <div class="rc-title">${r.title}</div>
+      <div class="rc-subject">${subjLabel}</div>
+      <div class="rc-title">${escapeHtml(r.title)}</div>
       <div class="rc-time">${relativeTimeKo(r.openedAt)}</div>
     </div>`;
   }).join('');
@@ -257,6 +380,7 @@ if ('serviceWorker' in navigator) {
 (async function init() {
   await loadSubjects();
   await loadArchives();
+  await loadFolders();
   renderRecent();
   refreshStatusline();
   setInterval(refreshStatusline, 30000);

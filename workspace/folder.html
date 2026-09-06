@@ -1,0 +1,190 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1.0,viewport-fit=cover">
+<title>나의 폴더</title>
+<link rel="manifest" href="../manifest.json">
+<meta name="theme-color" content="#00838f">
+<link rel="icon" href="../icon.svg" type="image/svg+xml">
+<link rel="apple-touch-icon" href="../icon-180.png">
+<link href="https://fonts.googleapis.com/css2?family=Noto+Sans+KR:wght@300;400;500;700;900&family=DM+Mono:wght@400;500&display=swap" rel="stylesheet">
+<style>
+:root{
+  --bg:#f5f3ef; --surface:#ffffff; --border:#e8e4dc; --ink:#1a1814; --ink-mid:#6a6258; --ink-light:#aaa49c;
+  --accent:#00838f; --accent-light:#e0f4f6;
+  --font:'Noto Sans KR',sans-serif; --mono:'DM Mono',monospace;
+  --shadow:0 2px 12px rgba(0,0,0,0.08); --shadow-lg:0 8px 32px rgba(0,0,0,0.12); --radius:14px;
+}
+body.dark{ --bg:#0e0c0a; --surface:#1a1814; --border:#2a2820; --ink:#d8d0c0; --ink-mid:#6a6258; --ink-light:#3a3830; --accent-light:rgba(0,131,143,0.14); }
+*{margin:0;padding:0;box-sizing:border-box;}
+body{font-family:var(--font);background:var(--bg);color:var(--ink);min-height:100vh;min-height:100dvh;}
+
+.header{background:var(--accent);padding:14px 20px;padding-top:calc(14px + env(safe-area-inset-top,0px));display:flex;align-items:center;gap:12px;flex-wrap:wrap;box-shadow:0 2px 8px rgba(0,131,143,0.3);}
+.header-btn{padding:7px 12px;border-radius:8px;border:1px solid rgba(255,255,255,0.35);background:none;color:#fff;font-size:12px;font-family:var(--font);cursor:pointer;flex-shrink:0;}
+.header-btn:hover{background:rgba(255,255,255,0.15);}
+.header-title{display:flex;align-items:center;gap:10px;color:#fff;font-size:17px;font-weight:800;min-width:0;}
+.header-title .ht-icon{width:38px;height:38px;border-radius:10px;background:rgba(255,255,255,0.2);display:flex;align-items:center;justify-content:center;font-size:18px;flex-shrink:0;}
+.header-title .ht-name{overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
+.header-spacer{flex:1;}
+
+.main{max-width:1000px;margin:0 auto;padding:28px 20px 60px;}
+.section-title{font-size:13px;font-weight:800;color:var(--ink-mid);letter-spacing:.04em;margin-bottom:14px;}
+.empty-hint{color:var(--ink-light);font-size:12.5px;padding:28px 2px;text-align:center;}
+
+.book-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(180px,1fr));gap:16px;}
+.book-card{position:relative;border-radius:var(--radius);background:var(--surface);border:1px solid var(--border);padding:20px 16px 16px;cursor:pointer;box-shadow:var(--shadow);transition:transform .15s,box-shadow .15s;min-height:110px;display:flex;flex-direction:column;justify-content:flex-end;gap:8px;}
+.book-card:hover{transform:translateY(-3px);box-shadow:var(--shadow-lg);}
+.book-card .bc-icon{font-size:26px;}
+.book-card .bc-name{font-size:14.5px;font-weight:700;color:var(--ink);overflow:hidden;text-overflow:ellipsis;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;}
+.book-card .bc-actions{position:absolute;top:10px;right:10px;display:flex;gap:4px;}
+.bc-icon-btn{width:24px;height:24px;border-radius:6px;border:none;background:var(--bg);color:var(--ink-mid);font-size:11px;cursor:pointer;display:flex;align-items:center;justify-content:center;}
+.bc-icon-btn:hover{background:var(--accent-light);color:var(--accent);}
+
+.add-tile{border:1.5px dashed var(--border);border-radius:var(--radius);background:none;color:var(--ink-mid);min-height:110px;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:6px;cursor:pointer;font-family:var(--font);font-size:13px;font-weight:700;}
+.add-tile:hover{border-color:var(--accent);color:var(--accent);background:var(--accent-light);}
+.add-tile .at-icon{font-size:22px;}
+
+.toast{position:fixed;bottom:24px;left:50%;transform:translateX(-50%) translateY(8px);background:#1a1814;color:#d8d0c0;padding:10px 20px;border-radius:20px;font-size:12px;opacity:0;pointer-events:none;transition:all 0.25s;z-index:900;white-space:nowrap;}
+.toast.show{opacity:1;transform:translateX(-50%) translateY(0);}
+
+/* 이름 입력 팝업 — index.html의 새 폴더 만들기와 완전히 같은 마크업/스타일을 그대로 재사용 */
+#name-prompt-modal{position:fixed;inset:0;z-index:900;background:rgba(0,0,0,0.5);display:none;align-items:center;justify-content:center;padding:16px;}
+#name-prompt-modal.open{display:flex;}
+.np-box{background:var(--surface);border-radius:14px;width:min(320px,100%);padding:20px;box-shadow:var(--shadow-lg);}
+.np-title{font-size:14px;font-weight:700;margin-bottom:12px;}
+.np-input{width:100%;padding:10px 12px;border-radius:8px;border:1.5px solid var(--border);background:var(--bg);color:var(--ink);font-family:var(--font);font-size:13px;margin-bottom:14px;}
+.np-actions{display:flex;justify-content:flex-end;gap:8px;}
+.np-btn{padding:8px 16px;border-radius:8px;border:1.5px solid var(--border);background:none;color:var(--ink);font-family:var(--font);font-size:12.5px;cursor:pointer;}
+.np-btn.primary{background:var(--accent);border-color:var(--accent);color:#fff;}
+</style>
+</head>
+<body>
+<div class="header">
+  <div class="header-title"><div class="ht-icon">📁</div><div class="ht-name" id="folder-name-label">나의 폴더</div></div>
+  <div class="header-spacer"></div>
+  <button class="header-btn" onclick="location.href='../index.html'">🏠 허브</button>
+  <button class="header-btn" onclick="toggleDark()">🌙 다크</button>
+</div>
+
+<div class="main">
+  <div class="section-title">📂 이 폴더의 자료</div>
+  <div class="book-grid" id="book-grid"></div>
+</div>
+
+<div id="name-prompt-modal">
+  <div class="np-box">
+    <div class="np-title" id="np-title">이름</div>
+    <input type="text" class="np-input" id="np-input" maxlength="60" onkeydown="if(event.key==='Enter'){event.preventDefault();closeNamePrompt(true);} if(event.key==='Escape'){closeNamePrompt(false);}">
+    <div class="np-actions">
+      <button class="np-btn" onclick="closeNamePrompt(false)">취소</button>
+      <button class="np-btn primary" onclick="closeNamePrompt(true)">확인</button>
+    </div>
+  </div>
+</div>
+
+<div class="toast" id="toast"></div>
+
+<script src="../shared/annotation-engine.js"></script>
+<script>
+const Engine = AnnotationEngine;
+let currentFolderId = null;
+let books = [];
+
+function toggleDark() {
+  const on = document.body.classList.toggle('dark');
+  localStorage.setItem('ann:dark', on ? '1' : '0');
+}
+if (localStorage.getItem('ann:dark') === '1') document.body.classList.add('dark');
+
+function showToast(msg) {
+  const t = document.getElementById('toast'); t.textContent = msg; t.classList.add('show');
+  clearTimeout(t._t); t._t = setTimeout(() => t.classList.remove('show'), 2200);
+}
+
+/* ── 이름 입력 팝업(폴더 이름 표시는 index.html이 넘겨준 값을 우선 쓰고, 책 생성/이름
+   변경 시에는 이 팝업으로 새 이름을 받는다) ── */
+let namePromptOnConfirm = null;
+function openNamePrompt(title, defaultValue, onConfirm) {
+  document.getElementById('np-title').textContent = title;
+  const input = document.getElementById('np-input'); input.value = defaultValue || '';
+  namePromptOnConfirm = onConfirm;
+  document.getElementById('name-prompt-modal').classList.add('open');
+  setTimeout(() => { input.focus(); input.select(); }, 50);
+}
+function closeNamePrompt(confirmed) {
+  document.getElementById('name-prompt-modal').classList.remove('open');
+  const cb = namePromptOnConfirm; namePromptOnConfirm = null;
+  if (!confirmed || !cb) return;
+  const name = document.getElementById('np-input').value.trim();
+  if (name) cb(name);
+}
+
+async function loadBooks() {
+  books = await Engine.Storage.listBooks(currentFolderId);
+  renderBooks();
+}
+function renderBooks() {
+  const grid = document.getElementById('book-grid');
+  const addTile = `<button class="add-tile" onclick="createBook()"><span class="at-icon">➕</span>새 자료 만들기</button>`;
+  if (!books.length) {
+    grid.innerHTML = addTile;
+    const hint = document.createElement('div');
+    hint.className = 'empty-hint'; hint.style.gridColumn = '1/-1';
+    hint.textContent = '아직 만든 자료가 없어요 — 위 버튼으로 첫 자료를 만들어보세요.';
+    grid.appendChild(hint);
+    return;
+  }
+  grid.innerHTML = books.map(b => `
+    <div class="book-card" onclick="openBook('${b.id}')">
+      <div class="bc-actions">
+        <button class="bc-icon-btn" onclick="event.stopPropagation();renameBookUI('${b.id}')" title="이름 바꾸기">✎</button>
+        <button class="bc-icon-btn" onclick="event.stopPropagation();deleteBookUI('${b.id}')" title="삭제">🗑</button>
+      </div>
+      <div class="bc-icon">📄</div>
+      <div class="bc-name">${escapeHtml(b.title)}</div>
+    </div>`).join('') + addTile;
+}
+function escapeHtml(s) { return (s || '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c])); }
+
+function openBook(bookId) {
+  const b = books.find(x => x.id === bookId);
+  const title = b ? b.title : '';
+  location.href = 'viewer.html?book=' + encodeURIComponent(bookId) + '&folder=' + encodeURIComponent(currentFolderId) + '&title=' + encodeURIComponent(title);
+}
+function createBook() {
+  openNamePrompt('새 자료 이름', '', async name => {
+    try {
+      const book = await Engine.Storage.createBook(currentFolderId, name);
+      showToast('"' + name + '" 자료를 만들었어요');
+      location.href = 'viewer.html?book=' + encodeURIComponent(book.id) + '&folder=' + encodeURIComponent(currentFolderId) + '&title=' + encodeURIComponent(book.title);
+    } catch (e) { showToast('자료를 만들지 못했어요 — 네트워크 상태를 확인해주세요'); }
+  });
+}
+function renameBookUI(bookId) {
+  const b = books.find(x => x.id === bookId); if (!b) return;
+  openNamePrompt('자료 이름 변경', b.title, async name => {
+    try { await Engine.Storage.renameBook(bookId, name); showToast('이름을 바꿨어요'); await loadBooks(); }
+    catch (e) { showToast('이름을 바꾸지 못했어요'); }
+  });
+}
+async function deleteBookUI(bookId) {
+  const b = books.find(x => x.id === bookId); if (!b) return;
+  if (!confirm('"' + b.title + '" 자료를 삭제할까요?\n이 안의 페이지·필기 내용도 함께 삭제되며 되돌릴 수 없습니다.')) return;
+  try { await Engine.Storage.deleteBook(bookId); showToast('삭제했어요'); await loadBooks(); }
+  catch (e) { showToast('삭제하지 못했어요 — 네트워크 상태를 확인해주세요'); }
+}
+
+if ('serviceWorker' in navigator) Engine.PWA.registerServiceWorker('../sw.js', {});
+
+(function init() {
+  const params = new URLSearchParams(location.search);
+  currentFolderId = params.get('folder');
+  const name = params.get('name');
+  if (name) document.getElementById('folder-name-label').textContent = name;
+  if (!currentFolderId) { showToast('폴더 정보를 찾을 수 없어요'); return; }
+  loadBooks();
+})();
+</script>
+</body>
+</html>

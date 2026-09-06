@@ -164,12 +164,15 @@
       return changed;
     }
 
-    async function uploadAsset(bookId, pageId, kind, dataUrl, filename) {
+    // extra는 기본 업로드 경로(images/audio, pinned 요소용)를 다른 R2/디스크 경로로
+    // 바꿔야 하는 특수 케이스(예: "나의 폴더" 사진 페이지 — user-pages/<bookId>/<pageId>)를
+    // 위한 훅이다. 생략하면(undefined) 지금까지와 완전히 동일하게 동작한다.
+    async function uploadAsset(bookId, pageId, kind, dataUrl, filename, extra) {
       if (!(await ping())) return null;
       try {
         const res = await fetch(API_BASE_URL + 'upload', {
           method: 'POST', headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ kind, pageId: fullKey(bookId, pageId), dataUrl, filename })
+          body: JSON.stringify(Object.assign({ kind, pageId: fullKey(bookId, pageId), dataUrl, filename }, extra || {}))
         });
         if (!res.ok) return null;
         const j = await res.json();
@@ -261,6 +264,70 @@
     // 페이지 완전 삭제(5초 되돌리기 만료) 뒤 로컬 흔적 정리
     function removePageTraces(bookId, pageId) { removeLayer(bookId, pageId); }
 
+    // ── "나의 폴더"(워크스페이스) — 폴더/책 목록은 subjects.json/archives.json 같은
+    // 정적 파일이 아니라 항상 서버(KV)가 유일한 출처다. 로컬에 캐시/백업해두지
+    // 않는다 — 페이지를 열 때마다 새로 fetch하고, 실패(오프라인)하면 빈 배열을
+    // 돌려줘서 호출부가 "폴더 없음"과 똑같은 빈 상태로 그리게 한다. fetch를 이 파일
+    // 바깥(index.html, workspace/*)에서 직접 하지 않는 원칙은 여기도 동일하게 지킨다.
+    async function listFolders() {
+      try {
+        const res = await fetch(API_BASE_URL + 'workspace/folders', { cache: 'no-store' });
+        if (!res.ok) return [];
+        const j = await res.json();
+        return Array.isArray(j.folders) ? j.folders : [];
+      } catch (e) { return []; }
+    }
+    async function createFolder(name) {
+      const res = await fetch(API_BASE_URL + 'workspace/folders', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ name })
+      });
+      if (!res.ok) throw new Error('create folder failed (' + res.status + ')');
+      return (await res.json()).folder;
+    }
+    async function renameFolder(folderId, name) {
+      const res = await fetch(API_BASE_URL + 'workspace/folders/' + encodeURIComponent(folderId), {
+        method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ name })
+      });
+      if (!res.ok) throw new Error('rename folder failed (' + res.status + ')');
+      return (await res.json()).folder;
+    }
+    async function deleteFolder(folderId) {
+      const res = await fetch(API_BASE_URL + 'workspace/folders/' + encodeURIComponent(folderId), { method: 'DELETE' });
+      if (!res.ok) throw new Error('delete folder failed (' + res.status + ')');
+      return await res.json();
+    }
+    // folderId를 생략하면(폴더가 아직 확실치 않은 시점 — 예: 뷰어가 book만으로 열렸을
+    // 때) 쿼리스트링 자체를 안 붙인다 — 서버는 folderId가 아예 없으면 전체 책 목록을
+    // 돌려주므로, 이 값으로 book.folderId를 역으로 찾아낼 수 있다.
+    async function listBooks(folderId) {
+      try {
+        const qs = folderId ? ('?folderId=' + encodeURIComponent(folderId)) : '';
+        const res = await fetch(API_BASE_URL + 'workspace/books' + qs, { cache: 'no-store' });
+        if (!res.ok) return [];
+        const j = await res.json();
+        return Array.isArray(j.books) ? j.books : [];
+      } catch (e) { return []; }
+    }
+    async function createBook(folderId, title) {
+      const res = await fetch(API_BASE_URL + 'workspace/books', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ folderId, title })
+      });
+      if (!res.ok) throw new Error('create book failed (' + res.status + ')');
+      return (await res.json()).book;
+    }
+    async function renameBook(bookId, title) {
+      const res = await fetch(API_BASE_URL + 'workspace/books/' + encodeURIComponent(bookId), {
+        method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ title })
+      });
+      if (!res.ok) throw new Error('rename book failed (' + res.status + ')');
+      return (await res.json()).book;
+    }
+    async function deleteBook(bookId) {
+      const res = await fetch(API_BASE_URL + 'workspace/books/' + encodeURIComponent(bookId), { method: 'DELETE' });
+      if (!res.ok) throw new Error('delete book failed (' + res.status + ')');
+      return await res.json();
+    }
+
     // ── 최근 학습(허브 화면의 "최근 학습" 섹션용) ── 과목 허브는 이 기록만으로
     // 카드를 그린다. localStorage 직접 접근은 여기 한 곳으로 고정한다.
     const RECENTS_KEY = LS_PREFIX + ':recents';
@@ -335,6 +402,7 @@
       ping, stashBackup, getBackups, restoreBackup, deleteBackup, removePageTraces,
       recordRecent, getRecents,
       acquireLock, releaseLock, releaseLockBeacon, sendHeartbeat, getLockStatus,
+      listFolders, createFolder, renameFolder, deleteFolder, listBooks, createBook, renameBook, deleteBook,
       fullKey, normalizeAssetSrc
     };
   })();
@@ -511,18 +579,31 @@
       Events.emitStructureChanged(Object.assign({ scope: 'pageOrder', pageRebuild: 'full', bookId, totalPages: order.length }, extra));
     }
 
-    function insertPages(afterPos, count, template, refSize) {
+    // extra는 template별 부가 필드(예: "나의 폴더" 사진 페이지의 photoUrl/rotationDegrees)를
+    // 엔트리에 얹기 위한 훅이다. 생략하면(undefined) blank/lined/grid 3종 동작은 그대로다.
+    function insertPages(afterPos, count, template, refSize, extra) {
       const remaining = MAX_INSERTED_PAGES - countInsertedPages();
       count = clamp(count, 1, Math.max(0, remaining));
       if (count <= 0) return { inserted: 0, remaining };
       const entries = [];
       for (let i = 0; i < count; i++) {
-        entries.push({ id: genPageId(), kind: 'inserted', template, label: count > 1 ? ('새 페이지 ' + (i + 1)) : '새 페이지', width: refSize.width, height: refSize.height });
+        entries.push(Object.assign({ id: genPageId(), kind: 'inserted', template, label: count > 1 ? ('새 페이지 ' + (i + 1)) : '새 페이지', width: refSize.width, height: refSize.height }, extra || {}));
       }
       order.splice(afterPos, 0, ...entries);
       persist();
       notifyStructureChanged();
       return { inserted: count, firstPos: afterPos + 1, totalPages: order.length };
+    }
+
+    // 사진 페이지 전용 — 원본 파일은 절대 다시 그리지 않고 회전값만 90도씩 순환시킨다.
+    // 실제 화면 회전은 뷰어의 CSS transform(el.rotation과 같은 기법)이 담당한다.
+    function rotatePhotoPage(pos) {
+      const entry = getOrderEntry(pos);
+      if (!entry || entry.kind !== 'inserted' || entry.template !== 'photo') return null;
+      entry.rotationDegrees = ((entry.rotationDegrees || 0) + 90) % 360;
+      persist();
+      Events.emitStructureChanged({ scope: 'pageOrder', pageRebuild: 'full', bookId, totalPages: order.length });
+      return entry.rotationDegrees;
     }
 
     function deletePageAt(pos, onFinalize) {
@@ -582,7 +663,7 @@
 
     return {
       init, syncFromServer, getOrder, getTotalPages, getOrderEntry, pageIdOf, findPosByPdfPage,
-      countInsertedPages, insertPages, deletePageAt, undoPendingDelete, movePage, renamePage,
+      countInsertedPages, insertPages, deletePageAt, undoPendingDelete, movePage, renamePage, rotatePhotoPage,
       MAX_INSERTED_PAGES
     };
   })();
@@ -1050,8 +1131,33 @@
       ctx.restore();
     }
 
+    // "나의 폴더" 사진 페이지 전용 배경 노드 — el.rotation(buildImageNode)과 완전히
+    // 같은 CSS transform 기법으로만 회전을 표현한다. 원본 파일을 캔버스에 다시 그려
+    // 재인코딩하지 않으므로, 몇 번을 돌려도 화질 손실이 없고 원본 바이트는 불변이다.
+    // photo: { url, rotationDegrees(0/90/180/270) }. mountPage를 부르는 쪽이 opts.photo를
+    // 안 넘기면(자료실/과목 뷰어는 절대 안 넘김) 이 노드 자체가 생성되지 않는다.
+    function buildPagePhotoNode(widthPx, heightPx, photo) {
+      const wrap = document.createElement('div');
+      wrap.className = 'page-photo-bg';
+      wrap.style.width = widthPx + 'px'; wrap.style.height = heightPx + 'px';
+      const img = document.createElement('img');
+      img.className = 'page-photo-img'; img.draggable = false; img.alt = '';
+      img.src = Storage.normalizeAssetSrc(photo.url);
+      const rot = photo.rotationDegrees || 0;
+      if (rot === 90 || rot === 270) {
+        img.style.width = heightPx + 'px'; img.style.height = widthPx + 'px';
+        img.style.transform = 'translate(-50%,-50%) rotate(' + rot + 'deg)';
+      } else {
+        img.style.width = widthPx + 'px'; img.style.height = heightPx + 'px';
+        img.style.transform = 'translate(-50%,-50%)' + (rot === 180 ? ' rotate(180deg)' : '');
+      }
+      wrap.appendChild(img);
+      return wrap;
+    }
+
     // wrapEl 안에 ink/ink-live/el-layer 캔버스·오버레이를 만들고 이벤트를 건다.
     // opts: { pos, widthPx, heightPx, scale, drawBackground(ctx,w,h) 또는 template,
+    //         photo({url,rotationDegrees}) — "나의 폴더" 사진 페이지 전용, 선택적,
     //         onElementPlacement(kind,pos,layerId,x,y), onTextTap, onImageTap, onMediaTap }
     function mountPage(wrapEl, opts) {
       const pos = opts.pos, scale = opts.scale;
@@ -1064,6 +1170,7 @@
       wrapEl.appendChild(bgCanvas);
       if (opts.drawBackground) opts.drawBackground(bgCanvas.getContext('2d'), opts.widthPx, opts.heightPx);
       else templateBackground(bgCanvas.getContext('2d'), opts.widthPx, opts.heightPx, opts.template || 'blank');
+      if (opts.photo && opts.photo.url) wrapEl.appendChild(buildPagePhotoNode(opts.widthPx, opts.heightPx, opts.photo));
 
       const hlLayer = document.createElement('div');
       hlLayer.className = 'hl-layer'; hlLayer.id = 'hl-layer-' + pos;

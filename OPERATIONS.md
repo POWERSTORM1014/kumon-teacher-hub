@@ -37,4 +37,55 @@
 
 `pdf/` 폴더는 과목·카테고리 구분 없이 파일명 하나의 평평한(flat) 네임스페이스이므로,
 위 패턴처럼 앞에 구분자를 붙여 과목 쪽 bookId(`kumon-{과목}-{단계}-{범위}` 형식)와도,
-자료실 카테고리끼리도 절대 겹치지 않게 할 것.
+자료실 카테고리끼리도 절대 겹치지 않게 할 것. "나의 폴더"(아래 참고)의 `personal_` 접두어도
+같은 이유로 겹치지 않는다.
+
+## "나의 폴더"(워크스페이스) 데이터 구조
+
+subjects.json/archives.json과 달리 정적 파일이 아니라 KV(로컬은 `data/workspace/*.json`)
+기반 동적 데이터다. 두 키에 배열 전체를 저장한다(부분 갱신 없음 — 매번 통째로 읽고
+통째로 다시 쓴다):
+
+- `workspace:folders` → `[{ id: "folder_<hex>", name, createdAt }, ...]`
+- `workspace:books` → `[{ id: "personal_<hex>", folderId, title, createdAt }, ...]`
+
+`id`는 항상 서버가 자동 생성하고(`folder_`/`personal_` + 랜덤 hex), 이름/제목 변경(rename)은
+`id`를 바꾸지 않는다. **책의 실제 페이지 내용(필기·페이지 순서)은 이 배열에 전혀 들어있지
+않다** — `book.id`가 곧 기존 bookId이고, `layer:<bookId>__<page>`/`pageorder:<bookId>`를
+그대로 따른다. 즉 "나의 폴더" 책 하나 = 과목/자료실 책 하나와 완전히 같은 방식으로
+KV/파일에 흩어져 저장되며, 다른 점은 `workspace:books`에 그 책이 어느 폴더 소속인지와
+표시 제목만 별도로 관리한다는 것뿐이다.
+
+### 폴더/책 삭제 시 연쇄 삭제 범위(cascade)
+
+폴더 삭제 = 그 폴더의 모든 책에 대해 아래를 전부 수행 + `workspace:books`/
+`workspace:folders`에서 항목 제거. 책 삭제 = 아래만 수행 + `workspace:books`에서
+항목 제거. **하나라도 빠지면 "삭제했는데 KV/R2에 흔적이 남는" 문제가 생기므로,
+저장 위치를 새로 추가할 때는 반드시 양쪽(worker/src/index.js의
+`cascadeDeleteBookData`, server.js의 동명 함수)을 같이 고칠 것:**
+
+1. `pageorder:<bookId>` 키 삭제
+2. `layer:<bookId>__*` 전부 삭제 (KV `list({prefix})`로 열거 후 각각 삭제)
+3. `lock:<bookId>:*` 전부 삭제 (위와 동일)
+4. R2 `kumon-lesson-notes`의 `user-pages/<bookId>/` 전체 삭제 (`list({prefix})` 후 각각 삭제)
+5. (로컬 server.js만 해당) `data/page-order/backup/<bookId>_*.json`,
+   `data/layers/backup/<bookId>__*` 백업 파일도 함께 정리 — Worker/KV에는 backup 개념이
+   없으므로 이 단계는 로컬 전용이다.
+
+### 알려진 한계 — 동시 생성 경합
+
+`workspace:folders`/`workspace:books`는 배열 전체를 읽고 통째로 다시 쓰는 방식이라
+CAS(compare-and-swap)나 잠금이 없다. **두 기기에서 거의 동시에 폴더/책을 만들거나
+이름을 바꾸면, 나중에 쓴 요청이 먼저 쓴 요청의 변경을 덮어써서 한쪽 변경이 사라질 수
+있다.** 이 앱의 실제 사용 규모(교사 한 명이 자기 폴더를 만드는 정도)에서는 발생
+빈도가 매우 낮다고 보고 지금은 그대로 허용한다 — 문제가 실제로 재현되면 그때
+`If-Match`/버전 필드 같은 낙관적 잠금 도입을 검토할 것.
+
+### 알려진 한계 — 사진 페이지는 오프라인에서 추가 불가
+
+레이어 데이터(필기)는 dataURL을 일단 로컬에 넣고 저장 시점에 서버 경로로 몰래
+바꿔치기하는 방식(`migrateDataUrlAssets`)으로 오프라인에서도 그릴 수 있지만, 사진
+페이지는 페이지 순서 데이터(`page-order`)에 통째로 들어가는 구조라 같은 방식을 아직
+적용하지 않았다. 그 대신 "온라인일 때만 사진 페이지를 추가할 수 있다"는 더 단순한
+제약을 택했다(`workspace/viewer.js`의 `confirmPhotoPageInsert`) — 이미 추가된 사진
+페이지를 보거나 그 위에 필기하는 것은 오프라인에서도 그대로 된다.
