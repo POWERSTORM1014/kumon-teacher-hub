@@ -191,7 +191,13 @@ body{font-family:var(--font);background:var(--bg);color:var(--ink);height:100vh;
 .sidebar-resizer{width:6px;flex-shrink:0;cursor:col-resize;position:relative;touch-action:none;}
 .sidebar-resizer::before{content:'';position:absolute;top:0;bottom:0;left:2.5px;width:1px;background:var(--border);}
 .sidebar-resizer:hover::before,.sidebar-resizer.dragging::before{width:3px;left:1.5px;background:var(--accent);}
-.thumb-item{padding:6px;cursor:pointer;border-bottom:1px solid var(--border);position:relative;}
+/* touch-action:none — 이 파일의 다른 커스텀 포인터 드래그 요소(.sidebar-resizer,
+   .ink-canvas)는 전부 이걸 쓰는데 썸네일 목록만 빠져 있었다. .thumb-item은
+   세로로 스크롤되는 .sidebar 안에 있어서, 이게 없으면 손가락으로 누르고 있는
+   500ms(길게 눌러 "무장"되는 시간) 동안 손이 살짝만 흔들려도 브라우저가 그
+   움직임을 "스크롤 제스처"로 먼저 채가버릴 수 있다 — 그러면 JS는 그 뒤로 의미
+   있는 pointermove를 못 받고, 드래그 판정/좌표 계산이 어긋난 채로 끝난다. */
+.thumb-item{padding:6px;cursor:pointer;border-bottom:1px solid var(--border);position:relative;touch-action:none;}
 .thumb-item.cur{background:var(--accent-light);}
 .thumb-canvas{width:100%;height:auto;border-radius:4px;background:#f0ece4;display:block;}
 .thumb-num{text-align:center;font-size:10px;font-family:var(--mono);color:var(--ink-mid);margin-top:3px;line-height:1.3;}

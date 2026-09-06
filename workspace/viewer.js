@@ -313,18 +313,22 @@ function updateDragOverIndicator(item, clientY) {
   if (last) { last.classList.add('drag-over-after'); dragTargetInfo = { targetPos: parseInt(last.id.slice(6), 10), before: false }; }
 }
 function clearDragOverIndicators() { document.querySelectorAll('.drag-over-before,.drag-over-after').forEach(el => el.classList.remove('drag-over-before', 'drag-over-after')); }
+// "성공했다는데 화면은 안 바뀐" 상태를 다시는 만들지 않기 위해, 토스트는 여기서
+// 바로 띄우지 않는다 — movePage()가 성공을 반환한 것은 "재정렬 요청이 접수됐다"는
+// 뜻일 뿐, 실제로 썸네일이 다시 그려졌다는 보장은 아니다(둘 사이에 비동기 신호가
+// 하나 끼어 있다). pendingDragToast를 세워두고, handleStructureChanged()가
+// buildThumbs()/renderPages()를 실제로 실행한 바로 그 지점에서만 토스트를 띄운다.
+let pendingDragToast = false;
 function commitThumbDragMove(fromPos) {
   const info = dragTargetInfo; dragTargetInfo = null;
   if (!info || info.targetPos === fromPos) return;
   const curId = Engine.PageOrder.pageIdOf(curPage);
+  pendingDragToast = true;
   const result = Engine.PageOrder.movePage(fromPos, info.targetPos, info.before);
-  if (!result) return;
+  if (!result) { pendingDragToast = false; return; }
   totalPg = result.totalPages;
   const newPos = result.newPosOf(curId);
   if (newPos > 0) curPage = newPos;
-  // buildThumbs/renderPages는 여기서 직접 부르지 않는다 — movePage()가 낸
-  // kumon:structure-changed 신호를 handleStructureChanged()가 구독해서 다시 그린다.
-  showToast('페이지 순서를 바꿨어요');
 }
 
 let pageCtxMenuTarget = null;
@@ -1489,7 +1493,13 @@ function handleStructureChanged(e) {
     document.querySelectorAll('.pen-toolbar .pt-tool').forEach(b => { b.disabled = Engine.Events.isLocked(); });
     if (scope === 'pageOrder' && e.detail.locked) {
       if (totalPages) totalPg = totalPages;
-      if (pageRebuild === 'full') { buildThumbs(); renderPages(); updatePageInfo(); }
+      if (pageRebuild === 'full') {
+        buildThumbs(); renderPages(); updatePageInfo();
+        // 드래그 재정렬 토스트는 실제 재렌더링이 끝난 이 지점에서만 띄운다 —
+        // commitThumbDragMove() 참고. 삽입/삭제/되돌리기도 같은 pageRebuild:'full'
+        // 경로를 타지만 pendingDragToast는 드래그일 때만 세워지므로 서로 안 섞인다.
+        if (pendingDragToast) { pendingDragToast = false; showToast('페이지 순서를 바꿨어요'); }
+      }
       else if (pageRebuild === 'thumbs') { buildThumbs(); }
     }
     // 블록 선택 삭제(플로팅 툴바 🗑 버튼 / Delete·Backspace 키 공통 경로)의 유일한
