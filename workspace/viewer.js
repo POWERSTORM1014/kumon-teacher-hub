@@ -11,7 +11,13 @@ pdfjsLib.GlobalWorkerOptions.workerSrc = 'https://cdnjs.cloudflare.com/ajax/libs
 
 const CACHE_NAME = 'kth-content-v1'; // sw.js의 CONTENT_CACHE와 반드시 동일해야 함(모든 과목/자료실/워크스페이스 공용 캐시 버킷)
 const CURRENT_VIEWER_PATH = 'workspace/viewer.html';
-const DEFAULT_PAGE_SIZE = { width: 595, height: 842 }; // A4 비율 — PDF가 아예 없는 책에서 첫 페이지를 삽입할 때 참조할 기본 크기
+// A4 비율 — 두 군데서 쓰는 "표준" 크기다: (1) getPageViewport1()이 참조할 페이지가
+// 전혀 없을 때(PDF도 없고 entry도 없을 때)의 안전한 대체값, (2) 템플릿(백지/줄노트/
+// 모눈) 페이지를 새로 삽입할 때 항상 쓰는 고정 크기. (2)가 중요한 이유는 아래
+// confirmPageInsert()의 주석 참고 — "옆 페이지 크기를 베껴온다"가 아니라 "항상
+// 이 표준 크기로 만든다"여야 사진 페이지처럼 크기가 들쭉날쭉한 페이지 옆에
+// 삽입해도 오염되지 않는다.
+const DEFAULT_PAGE_SIZE = { width: 595, height: 842 };
 const Engine = AnnotationEngine;
 
 let pdfDoc = null, totalPg = 0, curPage = 1, activeInkPage = null;
@@ -385,8 +391,13 @@ async function confirmPageInsert() {
   if (piSelectedTemplate === 'photo') { await confirmPhotoPageInsert(); return; }
   const { afterPos } = pageInsertCtx;
   let count = parseInt(document.getElementById('pi-count').value, 10) || 1;
-  const vp1 = await getPageViewport1(Math.max(1, afterPos));
-  const result = Engine.PageOrder.insertPages(afterPos, count, piSelectedTemplate, vp1);
+  // 항상 표준 크기(DEFAULT_PAGE_SIZE)로 만든다 — 예전에는 getPageViewport1(afterPos)로
+  // "바로 옆 페이지"의 크기를 그대로 베껴왔는데, 사진 페이지는 페이지마다 크기가
+  // 제각각이라(각자 원본 사진 비율) 사진 바로 뒤에 템플릿 페이지를 삽입하면 그
+  // 사진 크기를 물려받고, 그 뒤에 또 삽입하면 그걸 또 물려받는 식으로 계속
+  // 오염되어 퍼져나갔다. 템플릿 페이지의 크기는 옆에 뭐가 있든 항상 고정이어야
+  // 한다 — 페이지 크기는 각 페이지 자신만의 값이지, 이웃에게서 물려받는 값이 아니다.
+  const result = Engine.PageOrder.insertPages(afterPos, count, piSelectedTemplate, DEFAULT_PAGE_SIZE);
   totalPg = result.totalPages || totalPg;
   if (result.firstPos) curPage = Math.max(1, Math.min(totalPg, result.firstPos));
   closePageInsertModal();
@@ -415,7 +426,16 @@ async function confirmPhotoPageInsert() {
       const localPageId = 'ins_' + Date.now() + Math.random().toString(36).slice(2, 8);
       const path = await Engine.Storage.uploadAsset(bookId, localPageId, 'image', dataUrl, 'photo.jpg', { dest: 'workspace-page', bookId, localPageId });
       if (!path) { showToast('사진 업로드에 실패했어요 — 다시 시도해주세요'); return; }
-      const result = Engine.PageOrder.insertPages(ctx.afterPos, 1, 'photo', { width, height }, { id: localPageId, photoUrl: path, rotationDegrees: 0 });
+      // 페이지의 "논리적 크기"(entry.width/height — 캔버스·잉크 좌표 공간, 화면에
+      // 실제로 그려질 크기)는 업로드된 사진 파일의 실제 픽셀 수와 다른 값이다.
+      // 파일 해상도는 화질을 위해 최대 COMPRESS_MAX_EDGE까지 유지하지만, 그 픽셀
+      // 수를 페이지 크기로 그대로 쓰면 다른 템플릿 페이지(DEFAULT_PAGE_SIZE 기준
+      // ~600~840 단위)보다 훨씬 커서 "이 페이지만 유독 크게" 보인다. pageSizeForPhoto()
+      // 가 가로세로 비율은 정확히 그대로 두고(레터박스·잘림 없음) 크기만 다른
+      // 페이지들과 같은 스케일로 줄여준다 — 실제 이미지 파일은 그대로 원본 해상도로
+      // 남아있으므로 확대해서 봐도 화질 저하는 없다.
+      const pageSize = pageSizeForPhoto(width, height);
+      const result = Engine.PageOrder.insertPages(ctx.afterPos, 1, 'photo', pageSize, { id: localPageId, photoUrl: path, rotationDegrees: 0 });
       totalPg = result.totalPages || totalPg;
       if (result.firstPos) curPage = Math.max(1, Math.min(totalPg, result.firstPos));
       showToast('📷 사진 페이지를 추가했어요');
@@ -423,17 +443,19 @@ async function confirmPhotoPageInsert() {
   };
   input.click();
 }
-// 큰 스캔/사진 원본을 그대로 올리면 무겁기만 하므로 긴 변 기준 최대 1600px로 줄이고
-// JPEG로 다시 인코딩한다 — 이건 "생성 시 한 번뿐인" 준비 단계이고, 이후 회전은 이
-// 압축본을 다시 건드리지 않고 항상 CSS transform으로만 적용한다(rotatePhotoPage).
+// 큰 스캔/사진 원본(특히 폰 카메라)을 그대로 올리면 렌더링/저장 성능에 영향을 주므로
+// 긴 변 기준 최대 COMPRESS_MAX_EDGE px로 줄이고 JPEG로 다시 인코딩한다 — 이건 "생성
+// 시 한 번뿐인" 준비 단계이고, 이후 회전은 이 압축본을 다시 건드리지 않고 항상 CSS
+// transform으로만 적용한다(rotatePhotoPage). 여기서 나오는 width/height는 "업로드할
+// 파일의 실제 픽셀 수"이지 페이지 크기가 아니다 — 페이지 크기는 pageSizeForPhoto() 참고.
+const COMPRESS_MAX_EDGE = 2000;
 function compressPhotoForPage(file) {
   return new Promise((resolve, reject) => {
     const img = new Image();
     img.onload = () => {
       URL.revokeObjectURL(img.src);
-      const MAX = 1600;
       let w = img.naturalWidth || 1, h = img.naturalHeight || 1;
-      if (w > MAX || h > MAX) { const r = Math.min(MAX / w, MAX / h); w = Math.round(w * r); h = Math.round(h * r); }
+      if (w > COMPRESS_MAX_EDGE || h > COMPRESS_MAX_EDGE) { const r = Math.min(COMPRESS_MAX_EDGE / w, COMPRESS_MAX_EDGE / h); w = Math.round(w * r); h = Math.round(h * r); }
       const canvas = document.createElement('canvas'); canvas.width = w; canvas.height = h;
       canvas.getContext('2d').drawImage(img, 0, 0, w, h);
       resolve({ dataUrl: canvas.toDataURL('image/jpeg', 0.85), width: w, height: h });
@@ -441,6 +463,18 @@ function compressPhotoForPage(file) {
     img.onerror = () => reject(new Error('image load failed'));
     img.src = URL.createObjectURL(file);
   });
+}
+// 사진 페이지의 "논리적 크기"(entry.width/height) 계산 — 가로세로 비율은 원본 그대로
+// 정확히 유지하면서(레터박스·강제 정사각형화 없음), 절대 크기만 DEFAULT_PAGE_SIZE와
+// 같은 스케일(긴 변 기준 STANDARD_PAGE_LONG_EDGE)로 맞춘다. 이걸 안 하면 압축 후에도
+// 여전히 최대 2000px에 달하는 사진 페이지가 ~600~840 단위인 다른 페이지들 옆에서
+// 유독 크게 렌더링된다 — "표준 캔버스에 fit"이 아니라 "같은 자(scale)로 다시 잰다"는
+// 차이다: 비율은 100% 원본 그대로, 숫자만 다른 페이지와 같은 자릿수로 내려온다.
+const STANDARD_PAGE_LONG_EDGE = DEFAULT_PAGE_SIZE.height;
+function pageSizeForPhoto(naturalW, naturalH) {
+  const long = Math.max(naturalW, naturalH) || 1;
+  const scale = STANDARD_PAGE_LONG_EDGE / long;
+  return { width: Math.max(1, Math.round(naturalW * scale)), height: Math.max(1, Math.round(naturalH * scale)) };
 }
 // 사진 페이지 전용 — 원본은 절대 다시 그리지 않고 90도씩 회전값만 순환시킨다.
 // 화면 반영은 rotatePhotoPage()가 내는 structure-changed 신호가 처리한다.
