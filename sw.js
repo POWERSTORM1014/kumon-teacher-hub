@@ -23,7 +23,7 @@
 // SHELL_CACHE/CONTENT_CACHE가 아닌 캐시를 전부 지우므로, 번호를 올리면 옛 SHELL_CACHE가
 // 자동으로 삭제되고 새 코드가 다시 캐싱된다. 번호를 안 올리면 배포해도 사용자 브라우저에
 // 옛 코드가 계속 남을 수 있다.
-const SW_VERSION = 'v2';
+const SW_VERSION = 'v3';
 const SHELL_CACHE = 'kth-shell-' + SW_VERSION;
 // CONTENT_CACHE는 SW_VERSION과 별개로 관리한다 — 교재 PDF/오프라인 저장본이 들어있어서,
 // 앱 셸 코드만 바뀐 배포마다 같이 버전을 올리면 사용자가 이미 받아둔 대용량 PDF까지
@@ -37,6 +37,7 @@ const CONTENT_CACHE = 'kth-content-v1';
 const SHELL_URLS = [
   './index.html',
   './subjects.json',
+  './archives.json',
   './manifest.json',
   './shared/annotation-engine.js',
   'https://fonts.googleapis.com/css2?family=Noto+Sans+KR:wght@300;400;500;700;900&family=DM+Mono:wght@400;500&display=swap',
@@ -109,12 +110,12 @@ async function handleFetch(req) {
   }
 }
 
-// 콘텐츠(교재 PDF + 과목별 데이터/화면)는 CONTENT_CACHE로, 그 외 공통 앱 셸은
+// 콘텐츠(교재 PDF + 과목/자료실별 데이터/화면)는 CONTENT_CACHE로, 그 외 공통 앱 셸은
 // SHELL_CACHE로 분류한다 — precacheAll()이 명시적으로 채우는 캐시와 이름을 맞춰야
 // isMaterialCached()류 조회가 어느 쪽에 들어있든 일관되게 찾아낸다.
 function isContentUrl(url) {
   // GitHub Pages 하위 경로 배포에서는 pathname이 '/kumon-teacher-hub/subjects/...'
   // 처럼 접두사가 붙으므로, startsWith 대신 includes로 배포 경로 깊이에 무관하게 판정한다.
   const pathname = new URL(url).pathname;
-  return pathname.includes('/pdf/') || pathname.includes('/subjects/');
+  return pathname.includes('/pdf/') || pathname.includes('/subjects/') || pathname.includes('/archives/');
 }

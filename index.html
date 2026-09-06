@@ -92,8 +92,13 @@ body{font-family:var(--font);background:var(--bg);color:var(--ink);min-height:10
   </div>
 
   <div class="section">
-    <div class="section-title">📚 전체 과목</div>
+    <div class="section-title">📚 교과목 학습</div>
     <div class="subject-grid" id="subject-grid"></div>
+  </div>
+
+  <div class="section">
+    <div class="section-title">🗂️ 자료실</div>
+    <div class="subject-grid" id="archive-grid"></div>
   </div>
 </div>
 
@@ -101,6 +106,7 @@ body{font-family:var(--font);background:var(--bg);color:var(--ink);min-height:10
 <script>
 const Engine = AnnotationEngine;
 let subjects = [];
+let archives = [];
 let searchDataCache = null;
 
 function toggleDark() {
@@ -115,6 +121,25 @@ async function loadSubjects() {
     subjects = await res.json();
   } catch (e) { subjects = []; }
   renderSubjectGrid();
+}
+
+// 자료실(연구대회 수상작·연수자료·소식지·교육원론·수업사례) — subjects.json/subjects/와
+// 완전히 별도인 archives.json/archives/를 읽어서 별도 구획에 렌더링한다. 기존 과목
+// 타일 렌더링(renderSubjectGrid)은 여기서 건드리지 않는다.
+async function loadArchives() {
+  try {
+    const res = await fetch('archives.json', { cache: 'no-store' });
+    archives = await res.json();
+  } catch (e) { archives = []; }
+  renderArchiveGrid();
+}
+function renderArchiveGrid() {
+  const grid = document.getElementById('archive-grid');
+  grid.innerHTML = archives.map(a => `
+    <div class="subject-card" style="background:${a.color || '#888'};" onclick="openSubject('${a.viewer}')">
+      <div class="sc-icon">${a.icon || '📘'}</div>
+      <div class="sc-name">${a.name}</div>
+    </div>`).join('');
 }
 
 function renderSubjectGrid() {
@@ -148,7 +173,7 @@ function renderRecent() {
   const grid = document.getElementById('recent-grid');
   if (!recents.length) { grid.innerHTML = '<div class="empty-hint">아직 열어본 교재가 없어요 — 아래 과목에서 교재를 선택해보세요.</div>'; return; }
   grid.innerHTML = recents.slice(0, 2).map(r => {
-    const subj = subjects.find(s => s.id === r.subjectId);
+    const subj = subjects.find(s => s.id === r.subjectId) || archives.find(a => a.id === r.subjectId);
     return `<div class="recent-card" onclick="openRecent('${r.viewerPath}','${r.bookId}')">
       <div class="rc-subject">${subj ? subj.icon + ' ' + subj.name : r.subjectId}</div>
       <div class="rc-title">${r.title}</div>
@@ -180,7 +205,7 @@ async function refreshStatusline() {
 async function loadSearchData() {
   if (searchDataCache) return searchDataCache;
   const groups = [];
-  for (const s of subjects) {
+  for (const s of subjects.concat(archives)) {
     if (!s.searchIndexUrl) continue;
     try {
       const res = await fetch(s.searchIndexUrl, { cache: 'no-store' });
@@ -225,12 +250,13 @@ document.addEventListener('click', e => { if (!e.target.closest('.search-wrap'))
 /* ── PWA ── */
 if ('serviceWorker' in navigator) {
   Engine.PWA.registerServiceWorker('./sw.js', {
-    onRegistered: () => Engine.PWA.precacheAll('kth-content-v1', ['./index.html', './subjects.json', './manifest.json', './shared/annotation-engine.js'], {})
+    onRegistered: () => Engine.PWA.precacheAll('kth-content-v1', ['./index.html', './subjects.json', './archives.json', './manifest.json', './shared/annotation-engine.js'], {})
   });
 }
 
 (async function init() {
   await loadSubjects();
+  await loadArchives();
   renderRecent();
   refreshStatusline();
   setInterval(refreshStatusline, 30000);

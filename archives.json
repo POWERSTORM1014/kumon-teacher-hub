@@ -1,0 +1,57 @@
+[
+  {
+    "id": "research-awards",
+    "name": "연구대회 수상작",
+    "icon": "🏆",
+    "color": "#b8860b",
+    "colorLight": "#fdf6e3",
+    "viewer": "archives/research-awards/viewer.html",
+    "searchIndexUrl": "archives/research-awards/search-index.json",
+    "filterLabel": "연도",
+    "status": "active"
+  },
+  {
+    "id": "training-materials",
+    "name": "교사 연수 자료",
+    "icon": "🎓",
+    "color": "#2e7d32",
+    "colorLight": "#eaf5ea",
+    "viewer": "archives/training-materials/viewer.html",
+    "searchIndexUrl": "archives/training-materials/search-index.json",
+    "filterLabel": "주제",
+    "status": "active"
+  },
+  {
+    "id": "newsletter",
+    "name": "구몬피아 소식지",
+    "icon": "📰",
+    "color": "#0277bd",
+    "colorLight": "#e3f3fb",
+    "viewer": "archives/newsletter/viewer.html",
+    "searchIndexUrl": "archives/newsletter/search-index.json",
+    "filterLabel": "발행호",
+    "status": "active"
+  },
+  {
+    "id": "philosophy",
+    "name": "구몬 교육 원론",
+    "icon": "📜",
+    "color": "#5d4037",
+    "colorLight": "#f2ece9",
+    "viewer": "archives/philosophy/viewer.html",
+    "searchIndexUrl": "archives/philosophy/search-index.json",
+    "filterLabel": "편",
+    "status": "active"
+  },
+  {
+    "id": "case-studies",
+    "name": "현장 수업 사례",
+    "icon": "🏫",
+    "color": "#6a1b9a",
+    "colorLight": "#f3e8fa",
+    "viewer": "archives/case-studies/viewer.html",
+    "searchIndexUrl": "archives/case-studies/search-index.json",
+    "filterLabel": "단계",
+    "status": "active"
+  }
+]
