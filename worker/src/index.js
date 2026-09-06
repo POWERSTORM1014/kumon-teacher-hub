@@ -51,10 +51,19 @@ function safeExt(filename, mime) {
   return MIME_EXT[mime] || '.bin';
 }
 
-function corsHeaders(origin) {
+// "나의 폴더" 폴더/책 단건 라우트(/api/workspace/folders/:id, /api/workspace/books/:id)만
+// PUT(이름변경)·DELETE(삭제)를 실제로 쓴다. 이 둘을 뺀 모든 기존 라우트(/api/layers,
+// /api/page-order, /api/lock, /api/upload, /api/ping과 workspace의 목록/생성
+// 라우트까지 포함)는 GET/POST만 쓰므로, parts를 넘기지 않거나 이 두 라우트가
+// 아니면 예전과 완전히 같은 'GET, POST, OPTIONS'를 돌려준다 — 아래 판정에서
+// 걸리지 않는 모든 호출부는 이번 수정으로 응답이 1바이트도 달라지지 않는다.
+function isWorkspaceItemRoute(parts) {
+  return !!parts && parts.length === 4 && parts[0] === 'api' && parts[1] === 'workspace' && (parts[2] === 'folders' || parts[2] === 'books');
+}
+function corsHeaders(origin, parts) {
   return {
     'Access-Control-Allow-Origin': '*',
-    'Access-Control-Allow-Methods': 'GET, POST, OPTIONS',
+    'Access-Control-Allow-Methods': isWorkspaceItemRoute(parts) ? 'GET, POST, PUT, DELETE, OPTIONS' : 'GET, POST, OPTIONS',
     'Access-Control-Allow-Headers': 'Content-Type',
     'Access-Control-Max-Age': '86400'
   };
@@ -124,13 +133,15 @@ async function cascadeDeleteBookData(env, bookId) {
 export default {
   async fetch(request, env) {
     const origin = request.headers.get('Origin') || '*';
-
-    if (request.method === 'OPTIONS') {
-      return new Response(null, { status: 204, headers: corsHeaders(origin) });
-    }
-
     const url = new URL(request.url);
     const parts = url.pathname.split('/').filter(Boolean); // 예: ['api','layers','test-book','1']
+
+    // OPTIONS는 실제 라우팅보다 먼저 응답하므로, workspace 단건 라우트(PUT/DELETE를
+    // 실제로 쓰는 곳)인지는 parts만 보고 여기서 직접 판정한다 — 라우팅 스위치 안의
+    // 개별 if문에 기대지 않는다(그 아래 로직은 전혀 안 건드림).
+    if (request.method === 'OPTIONS') {
+      return new Response(null, { status: 204, headers: corsHeaders(origin, parts) });
+    }
 
     try {
       // GET /api/ping

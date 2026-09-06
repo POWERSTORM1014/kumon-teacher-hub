@@ -90,6 +90,12 @@ body{font-family:var(--font);background:var(--bg);color:var(--ink);min-height:10
 .np-actions{display:flex;justify-content:flex-end;gap:8px;}
 .np-btn{padding:8px 16px;border-radius:8px;border:1.5px solid var(--border);background:none;color:var(--ink);font-family:var(--font);font-size:12.5px;cursor:pointer;}
 .np-btn.primary{background:var(--accent);border-color:var(--accent);color:#fff;}
+
+/* 알림 토스트 — subjects/archives/workspace 뷰어(viewer.js의 showToast)와 완전히
+   같은 모양/타이밍으로 맞춘다. 허브 화면(index.html)에는 이 토스트 자체가 지금까지
+   없었다 — "나의 폴더" 생성/이름변경/삭제 결과를 알려줄 곳이 필요해서 추가한다. */
+.toast{position:fixed;bottom:24px;left:50%;transform:translateX(-50%) translateY(8px);background:#1a1814;color:#d8d0c0;padding:10px 20px;border-radius:20px;font-size:12px;opacity:0;pointer-events:none;transition:all 0.25s;z-index:900;white-space:nowrap;}
+.toast.show{opacity:1;transform:translateX(-50%) translateY(0);}
 </style>
 </head>
 <body>
@@ -143,6 +149,8 @@ body{font-family:var(--font);background:var(--bg);color:var(--ink);min-height:10
   </div>
 </div>
 
+<div class="toast" id="toast"></div>
+
 <script src="shared/annotation-engine.js"></script>
 <script>
 const Engine = AnnotationEngine;
@@ -152,6 +160,14 @@ let folders = [];
 let searchDataCache = null;
 
 function escapeHtml(s) { return (s || '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c])); }
+
+// subjects/archives/workspace 뷰어(viewer.js)의 showToast()와 완전히 같은 구현 —
+// 허브 화면에는 이 알림 표시 함수가 지금까지 없었다("나의 폴더" 생성/이름변경/삭제
+// 결과를 알려줄 일이 이번에 처음 생김).
+function showToast(msg) {
+  const t = document.getElementById('toast'); t.textContent = msg; t.classList.add('show');
+  clearTimeout(t._t); t._t = setTimeout(() => t.classList.remove('show'), 2200);
+}
 
 function toggleDark() {
   const on = document.body.classList.toggle('dark');
