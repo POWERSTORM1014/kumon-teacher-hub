@@ -161,18 +161,31 @@ function createBook() {
     } catch (e) { showToast('자료를 만들지 못했어요 — 네트워크 상태를 확인해주세요'); }
   });
 }
+// 이름변경/삭제 뒤에는 loadBooks()로 다시 fetch하지 않고 로컬 books 배열을 직접
+// 고친다 — Cloudflare Workers KV는 쓰기 직후 읽기가 즉시 반영된다고 보장하지 않아서
+// (eventual consistency, 운영 중 확인됨), 쓰자마자 재조회하면 방금 한 변경이 아직
+// 안 보일 수 있다. createBook()은 애초에 재조회 없이 응답의 book.id로 바로
+// 뷰어 이동이라 이 문제와 무관하다.
 function renameBookUI(bookId) {
   const b = books.find(x => x.id === bookId); if (!b) return;
   openNamePrompt('자료 이름 변경', b.title, async name => {
-    try { await Engine.Storage.renameBook(bookId, name); showToast('이름을 바꿨어요'); await loadBooks(); }
-    catch (e) { showToast('이름을 바꾸지 못했어요'); }
+    try {
+      const updated = await Engine.Storage.renameBook(bookId, name);
+      b.title = updated.title;
+      renderBooks();
+      showToast('이름을 바꿨어요');
+    } catch (e) { showToast('이름을 바꾸지 못했어요'); }
   });
 }
 async function deleteBookUI(bookId) {
   const b = books.find(x => x.id === bookId); if (!b) return;
   if (!confirm('"' + b.title + '" 자료를 삭제할까요?\n이 안의 페이지·필기 내용도 함께 삭제되며 되돌릴 수 없습니다.')) return;
-  try { await Engine.Storage.deleteBook(bookId); showToast('삭제했어요'); await loadBooks(); }
-  catch (e) { showToast('삭제하지 못했어요 — 네트워크 상태를 확인해주세요'); }
+  try {
+    await Engine.Storage.deleteBook(bookId);
+    books = books.filter(x => x.id !== bookId);
+    renderBooks();
+    showToast('삭제했어요');
+  } catch (e) { showToast('삭제하지 못했어요 — 네트워크 상태를 확인해주세요'); }
 }
 
 if ('serviceWorker' in navigator) Engine.PWA.registerServiceWorker('../sw.js', {});

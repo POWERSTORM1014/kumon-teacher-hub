@@ -223,17 +223,30 @@ function openFolder(folderId) {
   const f = folders.find(x => x.id === folderId);
   location.href = 'workspace/folder.html?folder=' + encodeURIComponent(folderId) + '&name=' + encodeURIComponent(f ? f.name : '');
 }
+// 생성/이름변경/삭제 뒤에는 loadFolders()로 다시 fetch하지 않고, 서버가 돌려준(또는
+// 우리가 이미 아는) 값으로 로컬 folders 배열을 직접 고쳐서 다시 그린다. Cloudflare
+// Workers KV는 쓰기 직후 읽기가 즉시 반영된다고 보장하지 않는(eventual consistency)
+// 저장소라, 쓰자마자 목록을 재조회하면 방금 한 변경이 아직 안 보이는 경우가 실제로
+// 있었다(운영 중 확인됨) — 응답으로 받은 값을 그대로 신뢰하는 편이 더 정확하고 빠르다.
 function createFolderUI() {
   openNamePrompt('새 폴더 이름', '', async name => {
-    try { await Engine.Storage.createFolder(name); showToast('"' + name + '" 폴더를 만들었어요'); await loadFolders(); }
-    catch (e) { showToast('폴더를 만들지 못했어요 — 네트워크 상태를 확인해주세요'); }
+    try {
+      const folder = await Engine.Storage.createFolder(name);
+      folders.push(folder);
+      renderFolderGrid();
+      showToast('"' + name + '" 폴더를 만들었어요');
+    } catch (e) { showToast('폴더를 만들지 못했어요 — 네트워크 상태를 확인해주세요'); }
   });
 }
 function renameFolderUI(folderId) {
   const f = folders.find(x => x.id === folderId); if (!f) return;
   openNamePrompt('폴더 이름 변경', f.name, async name => {
-    try { await Engine.Storage.renameFolder(folderId, name); showToast('이름을 바꿨어요'); await loadFolders(); }
-    catch (e) { showToast('이름을 바꾸지 못했어요'); }
+    try {
+      const updated = await Engine.Storage.renameFolder(folderId, name);
+      f.name = updated.name;
+      renderFolderGrid();
+      showToast('이름을 바꿨어요');
+    } catch (e) { showToast('이름을 바꾸지 못했어요'); }
   });
 }
 async function deleteFolderUI(folderId) {
@@ -243,8 +256,12 @@ async function deleteFolderUI(folderId) {
     ? `"${f.name}" 폴더 안의 자료 ${books.length}개가 모두 삭제됩니다. 계속할까요?\n되돌릴 수 없습니다.`
     : `"${f.name}" 폴더를 삭제할까요?`;
   if (!confirm(msg)) return;
-  try { await Engine.Storage.deleteFolder(folderId); showToast('삭제했어요'); await loadFolders(); }
-  catch (e) { showToast('삭제하지 못했어요 — 네트워크 상태를 확인해주세요'); }
+  try {
+    await Engine.Storage.deleteFolder(folderId);
+    folders = folders.filter(x => x.id !== folderId);
+    renderFolderGrid();
+    showToast('삭제했어요');
+  } catch (e) { showToast('삭제하지 못했어요 — 네트워크 상태를 확인해주세요'); }
 }
 
 /* ── 이름 입력 팝업(폴더 새로 만들기/이름 변경 공용) ── */
