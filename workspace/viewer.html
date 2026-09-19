@@ -200,6 +200,7 @@ body{font-family:var(--font);background:var(--bg);color:var(--ink);height:100vh;
    있는 pointermove를 못 받고, 드래그 판정/좌표 계산이 어긋난 채로 끝난다. */
 .thumb-item{padding:6px;cursor:pointer;border-bottom:1px solid var(--border);position:relative;touch-action:none;}
 .thumb-item.cur{background:var(--accent-light);}
+.thumb-item.selected{outline:2px solid var(--accent);outline-offset:-2px;}
 .thumb-canvas{width:100%;height:auto;border-radius:4px;background:#f0ece4;display:block;}
 .thumb-num{text-align:center;font-size:10px;font-family:var(--mono);color:var(--ink-mid);margin-top:3px;line-height:1.3;}
 .thumb-label{font-size:9px;color:var(--ink-light);text-align:center;margin-top:1px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}

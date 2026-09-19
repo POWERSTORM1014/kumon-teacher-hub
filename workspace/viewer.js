@@ -37,6 +37,11 @@ let zoom = 100, layout = 'single', sidebarOn = true, sidebarWidth = 90;
 const SIDEBAR_MIN_W = 64, SIDEBAR_MAX_W = 320, SIDEBAR_BASE_W = 90;
 let darkMode = false;
 let pdfSearchMatches = [], pdfSearchIdx = -1, pdfSearchTimer = null, pdfSearchQuery = '';
+// 좌측 썸네일 다중 선택 — 위치(pos)가 아니라 페이지 고유 id로 들고 있는다. 이동/
+// 삽입/삭제로 위치가 바뀌어도(정렬 자체가 이 값으로 다시 그려지므로) 선택 상태가
+// 엉뚱한 페이지로 옮겨붙지 않는다. selectionAnchorPos는 Shift+클릭 범위 선택의
+// 기준점(마지막으로 "단일 클릭"하거나 Ctrl+클릭으로 새로 켠 페이지의 위치)이다.
+let selectedPageIds = new Set(), selectionAnchorPos = null;
 
 function panelPage() { return activeInkPage !== null ? activeInkPage : curPage; }
 function setActiveInkPage(pos) {
@@ -240,9 +245,17 @@ async function buildThumbs() {
     const isInserted = !!(entry && entry.kind === 'inserted'); // 이 뷰어는 항상 true — PDF 원본이 없음
     const mainLabel = isInserted ? (entry.label || '새 페이지') : String(p);
     const item = document.createElement('div');
-    item.className = 'thumb-item' + (p === curPage ? ' cur' : '') + (isInserted ? ' inserted-page' : '');
+    const isSelected = isInserted && selectedPageIds.has(entry.id);
+    item.className = 'thumb-item' + (p === curPage ? ' cur' : '') + (isInserted ? ' inserted-page' : '') + (isSelected ? ' selected' : '');
     item.id = 'thumb-' + p;
-    item.onclick = () => { if (item.dataset.suppressClick === '1') { item.dataset.suppressClick = ''; return; } goToPage(p); };
+    item.onclick = e => {
+      if (item.dataset.suppressClick === '1') { item.dataset.suppressClick = ''; return; }
+      if (isInserted && (e.ctrlKey || e.metaKey)) { toggleThumbSelection(p); return; }
+      if (isInserted && e.shiftKey && selectionAnchorPos != null) { rangeSelectThumbs(selectionAnchorPos, p); return; }
+      clearThumbSelection();
+      if (isInserted) selectionAnchorPos = p;
+      goToPage(p);
+    };
     item.oncontextmenu = e => { e.preventDefault(); openPageContextMenu(p, e.clientX, e.clientY); };
     item.innerHTML = `<canvas class="thumb-canvas" id="tc-${p}"></canvas><div class="thumb-num">${escapeHtml(mainLabel)}</div>`;
     list.appendChild(item);
@@ -284,6 +297,46 @@ async function buildThumbs() {
   }
 }
 
+// ── 좌측 썸네일 다중 선택(Ctrl/Shift+클릭) ──────────────────────
+function toggleThumbSelection(pos) {
+  const entry = Engine.PageOrder.getOrderEntry(pos); if (!entry) return;
+  if (selectedPageIds.has(entry.id)) selectedPageIds.delete(entry.id);
+  else { selectedPageIds.add(entry.id); selectionAnchorPos = pos; }
+  refreshThumbSelectionUI();
+}
+function rangeSelectThumbs(fromPos, toPos) {
+  const a = Math.min(fromPos, toPos), b = Math.max(fromPos, toPos);
+  for (let p = a; p <= b; p++) {
+    const entry = Engine.PageOrder.getOrderEntry(p);
+    if (entry && entry.kind === 'inserted') selectedPageIds.add(entry.id);
+  }
+  refreshThumbSelectionUI();
+}
+function clearThumbSelection() {
+  if (!selectedPageIds.size) return;
+  selectedPageIds.clear();
+  refreshThumbSelectionUI();
+}
+function refreshThumbSelectionUI() {
+  for (let p = 1; p <= totalPg; p++) {
+    const entry = Engine.PageOrder.getOrderEntry(p);
+    const el = document.getElementById('thumb-' + p);
+    if (el) el.classList.toggle('selected', !!(entry && selectedPageIds.has(entry.id)));
+  }
+}
+// 드래그를 시작한 썸네일이 현재 다중 선택에 포함돼 있으면(2장 이상 선택 중일 때만)
+// 선택된 전체를 옮긴다 — 선택 안 된 항목을 끌면(또는 1장만 선택돼 있으면) 그 항목
+// 하나만 옮기는 기존 동작 그대로다. 반환값은 위치 오름차순(=현재 순서 그대로)이라
+// movePages/copyPages에 넘기면 "선택한 순서(=기존 상대 순서) 유지"가 자연히 지켜진다.
+function allSelectedPositions() {
+  const positions = [];
+  for (let p = 1; p <= totalPg; p++) {
+    const entry = Engine.PageOrder.getOrderEntry(p);
+    if (entry && selectedPageIds.has(entry.id)) positions.push(p);
+  }
+  return positions;
+}
+
 let dragTargetInfo = null;
 // 원본(subjects/archives) 뷰어의 이 제스처는 터치/펜만 처리하고(500ms 길게 누르면
 // "무장" → 드래그 또는 컨텍스트 메뉴) 마우스는 처음부터 빠져 있었다 — 마우스는 이미
@@ -292,10 +345,16 @@ let dragTargetInfo = null;
 // 마우스를 추가한다: 마우스는 스크롤과 충돌할 일이 없어 500ms 대기 없이 곧바로
 // "무장" 상태로 두고, 이동 거리(dist>6)만으로 드래그 여부를 가른다 — 그래서 제자리
 // 클릭(이동 없음)은 그대로 goToPage로 이어지고, 실제로 끌었을 때만 드래그로 처리된다.
+// dragPositions: 이번 드래그가 옮기는/복사하는 모든 위치(항상 위치 오름차순).
+// 드래그 시작 항목이 현재 다중 선택(2장 이상)에 포함돼 있으면 선택된 전체가, 아니면
+// 그 항목 하나만 담긴다. dragIsCopy는 포인터 이동 중 계속 최신 Ctrl/Cmd 키 상태로
+// 갱신한다 — 탐색기의 "Ctrl 누른 채로 드롭 = 복사" 관례와 동일하게, 드롭되는 순간의
+// 키 상태가 최종 판정된다.
 function initThumbGesture(item, pos) {
   const entry = Engine.PageOrder.getOrderEntry(pos);
   const canDrag = !!(entry && entry.kind === 'inserted');
   let timer = null, armed = false, dragging = false, pointerId = null, startX = 0, startY = 0, isMouse = false;
+  let dragPositions = null, dragIsCopy = false;
   item.addEventListener('pointerdown', e => {
     if (e.pointerType !== 'touch' && e.pointerType !== 'pen' && e.pointerType !== 'mouse') return;
     if (e.pointerType === 'mouse' && e.button !== 0) return; // 오른쪽 버튼은 oncontextmenu가 이미 처리
@@ -308,27 +367,35 @@ function initThumbGesture(item, pos) {
     if (pointerId === null || e.pointerId !== pointerId) return;
     const dist = Math.hypot(e.clientX - startX, e.clientY - startY);
     if (!armed) { if (dist > 10) clearTimeout(timer); return; }
-    if (canDrag && !dragging && dist > 6) { dragging = true; item.classList.add('dragging'); }
-    if (dragging) updateDragOverIndicator(item, e.clientY);
+    if (canDrag && !dragging && dist > 6) {
+      dragging = true;
+      const curEntry = Engine.PageOrder.getOrderEntry(pos);
+      dragPositions = (curEntry && selectedPageIds.has(curEntry.id) && selectedPageIds.size > 1) ? allSelectedPositions() : [pos];
+      dragPositions.forEach(p => { const el = document.getElementById('thumb-' + p); if (el) el.classList.add('dragging'); });
+    }
+    if (dragging) { dragIsCopy = e.ctrlKey || e.metaKey; updateDragOverIndicator(dragPositions, e.clientY); }
   });
   function endGesture(e) {
     if (pointerId === null || (e && e.pointerId !== pointerId)) return;
     clearTimeout(timer);
     if (dragging) {
-      item.classList.remove('dragging'); commitThumbDragMove(pos); clearDragOverIndicators();
+      (dragPositions || [pos]).forEach(p => { const el = document.getElementById('thumb-' + p); if (el) el.classList.remove('dragging'); });
+      commitThumbDragMove(dragPositions || [pos], dragIsCopy);
+      clearDragOverIndicators();
       item.dataset.suppressClick = '1'; // 드래그 뒤에 이어질 수 있는 클릭이 페이지 이동으로 오작동하지 않게 한다(마우스 경로에서 특히 필요)
     } else if (armed && !isMouse) {
       // 마우스는 길게 눌러도 컨텍스트 메뉴를 열지 않는다 — 우클릭이 이미 그 역할을 한다.
       item.dataset.suppressClick = '1'; openPageContextMenu(pos, e ? e.clientX : startX, e ? e.clientY : startY);
     }
-    pointerId = null; armed = false; dragging = false; isMouse = false;
+    pointerId = null; armed = false; dragging = false; isMouse = false; dragPositions = null;
   }
   item.addEventListener('pointerup', endGesture);
   item.addEventListener('pointercancel', endGesture);
 }
-function updateDragOverIndicator(item, clientY) {
+function updateDragOverIndicator(dragPositions, clientY) {
   clearDragOverIndicators(); dragTargetInfo = null;
-  const items = Array.from(document.getElementById('thumb-list').children).filter(el => el !== item);
+  const excluded = new Set(dragPositions);
+  const items = Array.from(document.getElementById('thumb-list').children).filter(el => !excluded.has(parseInt(el.id.slice(6), 10)));
   for (const el of items) {
     const r = el.getBoundingClientRect();
     if (clientY < r.top + r.height / 2) { el.classList.add('drag-over-before'); dragTargetInfo = { targetPos: parseInt(el.id.slice(6), 10), before: true }; return; }
@@ -340,19 +407,63 @@ function clearDragOverIndicators() { document.querySelectorAll('.drag-over-befor
 // "성공했다는데 화면은 안 바뀐" 상태를 다시는 만들지 않기 위해, 토스트는 여기서
 // 바로 띄우지 않는다 — movePage()가 성공을 반환한 것은 "재정렬 요청이 접수됐다"는
 // 뜻일 뿐, 실제로 썸네일이 다시 그려졌다는 보장은 아니다(둘 사이에 비동기 신호가
-// 하나 끼어 있다). pendingDragToast를 세워두고, handleStructureChanged()가
-// buildThumbs()/renderPages()를 실제로 실행한 바로 그 지점에서만 토스트를 띄운다.
-let pendingDragToast = false;
-function commitThumbDragMove(fromPos) {
+// 하나 끼어 있다). pendingDragToast(+표시할 문구 pendingDragToastText)를 세워두고,
+// handleStructureChanged()가 buildThumbs()/renderPages()를 실제로 실행한 바로 그
+// 지점에서만 토스트를 띄운다.
+let pendingDragToast = false, pendingDragToastText = '';
+function commitThumbDragMove(fromPositions, isCopy) {
   const info = dragTargetInfo; dragTargetInfo = null;
-  if (!info || info.targetPos === fromPos) return;
+  if (!info) return;
+  if (!isCopy && fromPositions.length === 1 && info.targetPos === fromPositions[0]) return; // 제자리 이동은 무시
+  if (isCopy) commitThumbCopy(fromPositions, info.targetPos, info.before);
+  else commitThumbMove(fromPositions, info.targetPos, info.before);
+}
+function commitThumbMove(fromPositions, targetPos, before) {
   const curId = Engine.PageOrder.pageIdOf(curPage);
   pendingDragToast = true;
-  const result = Engine.PageOrder.movePage(fromPos, info.targetPos, info.before);
+  pendingDragToastText = fromPositions.length > 1 ? ('페이지 ' + fromPositions.length + '장을 옮겼어요') : '페이지 순서를 바꿨어요';
+  const result = fromPositions.length > 1
+    ? Engine.PageOrder.movePages(fromPositions, targetPos, before)
+    : Engine.PageOrder.movePage(fromPositions[0], targetPos, before);
   if (!result) { pendingDragToast = false; return; }
   totalPg = result.totalPages;
   const newPos = result.newPosOf(curId);
   if (newPos > 0) curPage = newPos;
+}
+// 복사 — 원본 엔트리(위치·필기)는 절대 안 건드리고, 새 페이지 id마다 필기 레이어를
+// 통째로 복제해 넣는다. order 배열을 실제로 바꾸기(copyPages) 전에 모든 원본 페이지의
+// 레이어를 먼저 서버와 맞춰보고(checkPageSync) 읽어서 메모리에 복제해두는 이유는,
+// order를 바꾸는 순간 구조 변경 신호가 나가고 그 신호의 재렌더(setTimeout(0))가
+// 다음 이벤트 루프 틱에 실행되기 때문이다 — 그 사이에 await로 시간이 걸리는 작업이
+// 끼면 "새 페이지가 잠깐 빈 채로 보였다가 나중에 채워지는" 깜빡임이 생긴다. 그래서
+// 시간이 걸리는 부분(서버 동기화 확인)을 전부 먼저 끝내고, order 변경 + 새 pageId로
+// 레이어 저장까지는 await 없이 한 틱 안에 연달아 처리한다.
+async function commitThumbCopy(fromPositions, targetPos, before) {
+  // 복사도 삽입과 똑같이 MAX_INSERTED_PAGES 상한을 받는다(copyPages 내부에서 최종
+  // 판단) — 여기서는 넘는 게 뻔한 나머지에 대해 굳이 서버 동기화까지 시도하지
+  // 않도록, 같은 기준(위치 오름차순, 앞에서부터)으로 미리 잘라만 둔다.
+  const remaining = Engine.PageOrder.MAX_INSERTED_PAGES - Engine.PageOrder.countInsertedPages();
+  if (remaining <= 0) { showToast('삽입 가능한 페이지는 최대 ' + Engine.PageOrder.MAX_INSERTED_PAGES + '장까지예요'); return; }
+  const uniquePositions = [...new Set(fromPositions)].sort((a, b) => a - b).slice(0, remaining);
+  for (const p of uniquePositions) { await Engine.Sync.checkPageSync(bookId, p); }
+  const records = {};
+  for (const p of uniquePositions) {
+    const pageId = Engine.PageOrder.pageIdOf(p);
+    records[p] = JSON.parse(JSON.stringify(Engine.Storage.loadLayer(bookId, pageId)));
+  }
+  const curId = Engine.PageOrder.pageIdOf(curPage);
+  const result = Engine.PageOrder.copyPages(fromPositions, targetPos, before);
+  if (!result) return;
+  result.idMap.forEach(({ oldPos, newId }) => {
+    const rec = records[oldPos];
+    if (rec) Engine.Storage.saveLayer(bookId, newId, rec);
+  });
+  totalPg = result.totalPages;
+  const newPos = result.newPosOf(curId);
+  if (newPos > 0) curPage = newPos;
+  pendingDragToast = true;
+  pendingDragToastText = result.idMap.length > 1 ? ('페이지 ' + result.idMap.length + '장을 복사했어요') : '페이지를 복사했어요';
+  clearThumbSelection();
 }
 
 let pageCtxMenuTarget = null;
@@ -1565,7 +1676,7 @@ function handleStructureChanged(e) {
         // 드래그 재정렬 토스트는 실제 재렌더링이 끝난 이 지점에서만 띄운다 —
         // commitThumbDragMove() 참고. 삽입/삭제/되돌리기도 같은 pageRebuild:'full'
         // 경로를 타지만 pendingDragToast는 드래그일 때만 세워지므로 서로 안 섞인다.
-        if (pendingDragToast) { pendingDragToast = false; showToast('페이지 순서를 바꿨어요'); }
+        if (pendingDragToast) { pendingDragToast = false; showToast(pendingDragToastText || '페이지 순서를 바꿨어요'); }
       }
       else if (pageRebuild === 'thumbs') { buildThumbs(); }
     }

@@ -651,6 +651,59 @@
       return { totalPages: order.length, newPosOf: id => order.findIndex(e => e.id === id) + 1 };
     }
 
+    // "나의 폴더" 좌측 썸네일 다중 선택 이동 전용 — movePage() 하나를 여러 번 부르면
+    // 매번 order 인덱스가 밀려서 나머지 fromPos들이 다 어긋나므로, 통째로 한 번에
+    // 계산한다. targetPos/before가 가리키는 "기준 엔트리"를 이동 대상들을 배열에서
+    // 뽑아내기 전에 참조로 미리 붙잡아두고(숫자 위치가 아니라 엔트리 자체로 다시
+    // 찾음), 옮길 대상은 원래 순서(위치 오름차순)를 그대로 유지한 채 그 기준 앞/뒤에
+    // 통째로 끼워 넣는다. movePage()는 그대로 두고 별도 함수로 추가한 것이라 기존
+    // 단일 드래그 재정렬 동작에는 영향이 없다.
+    function movePages(fromPositions, targetPos, before) {
+      const fromSet = new Set(fromPositions);
+      if (!fromSet.size) return null;
+      const anchorEntry = before ? (order[targetPos - 1] || null) : (order[targetPos] || null);
+      const moved = [], rest = [];
+      order.forEach((e, idx) => { if (fromSet.has(idx + 1)) moved.push(e); else rest.push(e); });
+      if (!moved.length) return null;
+      let insertIdx = anchorEntry ? rest.indexOf(anchorEntry) : rest.length;
+      if (insertIdx < 0) insertIdx = rest.length; // anchorEntry가 이동 대상 자신이었던 예외적 경우의 안전망
+      order = rest.slice(0, insertIdx).concat(moved, rest.slice(insertIdx));
+      persist();
+      notifyStructureChanged();
+      return { totalPages: order.length, newPosOf: id => order.findIndex(e => e.id === id) + 1 };
+    }
+
+    // "나의 폴더" 좌측 썸네일 Ctrl+드래그 복사 전용 — 원본 엔트리는 위치·내용 그대로
+    // 두고, 선택된 페이지들을 얕은 복제(Object.assign)해 새 id(genPageId())로
+    // targetPos 자리에 끼워 넣는다. template/width/height/photoUrl/rotationDegrees
+    // 등 엔트리에 있는 필드는 무엇이든 그대로 복사되므로 템플릿 종류별로 따로
+    // 분기할 필요가 없다. 다만 이 함수는 "페이지 순서" 엔트리만 복제할 뿐, 그 페이지의
+    // 실제 필기 레이어 데이터(Storage.loadLayer/saveLayer)는 다루지 않는다 —
+    // PageOrder는 bookId만 알 뿐 레이어 스토리지 경계를 넘지 않는 기존 구조를 지키기
+    // 위해, 레이어 복제는 호출부(뷰어)가 idMap(oldPos→newId)을 받아 직접 수행한다.
+    function copyPages(fromPositions, targetPos, before) {
+      const remaining = MAX_INSERTED_PAGES - countInsertedPages();
+      if (remaining <= 0) return null;
+      const sortedFrom = [...new Set(fromPositions)].sort((a, b) => a - b);
+      // 복사도 삽입과 똑같이 페이지 수 상한(MAX_INSERTED_PAGES)의 적용을 받는다 —
+      // 넘는 만큼은(위치 오름차순 기준 뒤쪽부터) 조용히 잘라낸다.
+      const sourceEntries = sortedFrom.slice(0, remaining).map(pos => ({ pos, entry: order[pos - 1] })).filter(x => x.entry);
+      if (!sourceEntries.length) return null;
+      const idMap = [];
+      const copies = sourceEntries.map(({ pos, entry }) => {
+        const newId = genPageId();
+        idMap.push({ oldPos: pos, oldId: entry.id, newId });
+        return Object.assign({}, entry, { id: newId });
+      });
+      const anchorEntry = before ? (order[targetPos - 1] || null) : (order[targetPos] || null);
+      let insertIdx = anchorEntry ? order.indexOf(anchorEntry) : order.length;
+      if (insertIdx < 0) insertIdx = order.length;
+      order = order.slice(0, insertIdx).concat(copies, order.slice(insertIdx));
+      persist();
+      notifyStructureChanged();
+      return { totalPages: order.length, idMap, newPosOf: id => order.findIndex(e => e.id === id) + 1 };
+    }
+
     function renamePage(pos, label) {
       const entry = getOrderEntry(pos);
       if (!entry || entry.kind !== 'inserted') return false;
@@ -663,8 +716,8 @@
 
     return {
       init, syncFromServer, getOrder, getTotalPages, getOrderEntry, pageIdOf, findPosByPdfPage,
-      countInsertedPages, insertPages, deletePageAt, undoPendingDelete, movePage, renamePage, rotatePhotoPage,
-      MAX_INSERTED_PAGES
+      countInsertedPages, insertPages, deletePageAt, undoPendingDelete, movePage, movePages, copyPages,
+      renamePage, rotatePhotoPage, MAX_INSERTED_PAGES
     };
   })();
 
