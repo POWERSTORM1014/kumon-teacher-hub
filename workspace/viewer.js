@@ -237,12 +237,32 @@ function goToFolder() {
 }
 
 /* ══ 썸네일 / 목차 ══════════════════════════════════════ */
+// 즐겨찾기만 보기 필터 — 켜져 있으면 즐겨찾기 안 된 페이지는 아예 썸네일 DOM을
+// 만들지 않는다(숨김 처리가 아니라 통째로 생략). display:none으로 숨기기만 하면
+// getBoundingClientRect()가 0,0,0,0을 돌려줘서 드래그 드롭 위치 계산이 깨질 수
+// 있어서, 그 문제를 원천적으로 피하는 쪽을 택했다 — 대신 필터가 켜진 동안은
+// initThumbGesture()에서 드래그 시작 자체를 막는다(아래 canDrag 참고).
+let thumbFilterFavoritesOnly = false;
+function toggleThumbFilter() {
+  thumbFilterFavoritesOnly = !thumbFilterFavoritesOnly;
+  const btn = document.getElementById('thumb-filter-toggle');
+  if (btn) { btn.classList.toggle('on', thumbFilterFavoritesOnly); btn.textContent = thumbFilterFavoritesOnly ? '⭐ 즐겨찾기만' : '⭐ 전체'; }
+  buildThumbs();
+}
+function toggleThumbFavorite(pos) {
+  const fav = Engine.PageOrder.toggleFavorite(pos);
+  if (fav === null) return;
+  showToast(fav ? '⭐ 즐겨찾기에 추가했어요' : '즐겨찾기를 해제했어요');
+}
 async function buildThumbs() {
   const list = document.getElementById('thumb-list');
   list.innerHTML = '';
+  let shown = 0;
   for (let p = 1; p <= totalPg; p++) {
     const entry = Engine.PageOrder.getOrderEntry(p);
     const isInserted = !!(entry && entry.kind === 'inserted'); // 이 뷰어는 항상 true — PDF 원본이 없음
+    if (thumbFilterFavoritesOnly && !(isInserted && entry.favorite)) continue;
+    shown++;
     const mainLabel = isInserted ? (entry.label || '새 페이지') : String(p);
     const item = document.createElement('div');
     const isSelected = isInserted && selectedPageIds.has(entry.id);
@@ -257,7 +277,10 @@ async function buildThumbs() {
       goToPage(p);
     };
     item.oncontextmenu = e => { e.preventDefault(); openPageContextMenu(p, e.clientX, e.clientY); };
-    item.innerHTML = `<canvas class="thumb-canvas" id="tc-${p}"></canvas><div class="thumb-num">${escapeHtml(mainLabel)}</div>`;
+    const favBtn = isInserted
+      ? `<button class="thumb-fav-btn${entry.favorite ? ' on' : ''}" onclick="event.stopPropagation();toggleThumbFavorite(${p})" title="즐겨찾기">${entry.favorite ? '★' : '☆'}</button>`
+      : '';
+    item.innerHTML = `<canvas class="thumb-canvas" id="tc-${p}"></canvas>${favBtn}<div class="thumb-num">${escapeHtml(mainLabel)}</div>`;
     list.appendChild(item);
     const c = document.getElementById('tc-' + p);
     if (isInserted) {
@@ -294,6 +317,9 @@ async function buildThumbs() {
       await pg.render({ canvasContext: c.getContext('2d'), viewport: vp }).promise;
     }
     initThumbGesture(item, p);
+  }
+  if (thumbFilterFavoritesOnly && !shown) {
+    list.innerHTML = '<div class="thumb-empty-hint">⭐ 즐겨찾기한 페이지가 없어요</div>';
   }
 }
 
@@ -352,7 +378,10 @@ let dragTargetInfo = null;
 // 키 상태가 최종 판정된다.
 function initThumbGesture(item, pos) {
   const entry = Engine.PageOrder.getOrderEntry(pos);
-  const canDrag = !!(entry && entry.kind === 'inserted');
+  // 즐겨찾기만 보기 필터가 켜진 동안은 드래그를 시작하지 못하게 막는다 — 필터로
+  // 화면에서 빠진 페이지들이 실제 order 배열에는 여전히 끼어있어서, 필터된 목록만
+  // 보고 놓을 위치를 판단하면 실제 순서와 어긋난 자리에 꽂힐 수 있다.
+  const canDrag = !!(entry && entry.kind === 'inserted') && !thumbFilterFavoritesOnly;
   let timer = null, armed = false, dragging = false, pointerId = null, startX = 0, startY = 0, isMouse = false;
   let dragPositions = null, dragIsCopy = false;
   item.addEventListener('pointerdown', e => {

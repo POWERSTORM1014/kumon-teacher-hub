@@ -693,7 +693,11 @@
       const copies = sourceEntries.map(({ pos, entry }) => {
         const newId = genPageId();
         idMap.push({ oldPos: pos, oldId: entry.id, newId });
-        return Object.assign({}, entry, { id: newId });
+        // favorite:false — 원본이 즐겨찾기 상태였어도 사본은 항상 꺼진 채로 시작한다.
+        // 원본의 favorite 값은 이 Object.assign 이후에 오는 필드로 명시적으로
+        // 덮어써야만 이렇게 되므로(먼저 오면 entry.favorite가 다시 덮어씀), 반드시
+        // { id, favorite } 순서·위치를 entry 뒤에 둔다.
+        return Object.assign({}, entry, { id: newId, favorite: false });
       });
       const anchorEntry = before ? (order[targetPos - 1] || null) : (order[targetPos] || null);
       let insertIdx = anchorEntry ? order.indexOf(anchorEntry) : order.length;
@@ -714,10 +718,23 @@
       return true;
     }
 
+    // 즐겨찾기 on/off — renamePage()와 완전히 같은 성격(페이지 순서 엔트리의 메타데이터
+    // 한 필드만 바뀜)이라 같은 패턴을 그대로 따른다: 필기 레이어(Storage.loadLayer/
+    // saveLayer)는 전혀 건드리지 않고, 위치 매핑도 안 바뀌므로 pageRebuild:'thumbs'로
+    // 썸네일만 다시 그린다.
+    function toggleFavorite(pos) {
+      const entry = getOrderEntry(pos);
+      if (!entry || entry.kind !== 'inserted') return null;
+      entry.favorite = !entry.favorite;
+      persist();
+      Events.emitStructureChanged({ scope: 'pageOrder', pageRebuild: 'thumbs', bookId, totalPages: order.length });
+      return entry.favorite;
+    }
+
     return {
       init, syncFromServer, getOrder, getTotalPages, getOrderEntry, pageIdOf, findPosByPdfPage,
       countInsertedPages, insertPages, deletePageAt, undoPendingDelete, movePage, movePages, copyPages,
-      renamePage, rotatePhotoPage, MAX_INSERTED_PAGES
+      renamePage, toggleFavorite, rotatePhotoPage, MAX_INSERTED_PAGES
     };
   })();
 
