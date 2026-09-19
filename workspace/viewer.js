@@ -11,15 +11,24 @@ pdfjsLib.GlobalWorkerOptions.workerSrc = 'https://cdnjs.cloudflare.com/ajax/libs
 
 const CACHE_NAME = 'kth-content-v1'; // sw.js의 CONTENT_CACHE와 반드시 동일해야 함(모든 과목/자료실/워크스페이스 공용 캐시 버킷)
 const CURRENT_VIEWER_PATH = 'workspace/viewer.html';
-// 표준 페이지 캔버스 크기 — 세 군데서 쓰는 "표준" 크기다: (1) getPageViewport1()이
-// 참조할 페이지가 전혀 없을 때(PDF도 없고 entry도 없을 때)의 안전한 대체값, (2)
-// 템플릿(백지/줄노트/모눈) 페이지를 새로 삽입할 때 항상 쓰는 고정 크기, (3) 사진
-// 페이지를 새로 삽입할 때의 캔버스 크기(사진은 이 캔버스 안에 원본 비율 그대로
-// contain 방식으로 들어가고 남는 여백은 흰색— confirmPhotoPageInsert() 참고).
-// (2)/(3)이 중요한 이유는 아래 confirmPageInsert()의 주석 참고 — "옆 페이지 크기를
-// 베껴온다"나 "사진 원본 비율대로 페이지 크기를 정한다"가 아니라 "항상 이 표준
-// 크기로 만든다"여야 페이지마다 크기가 들쭉날쭉해지거나 옆 페이지로 오염되지 않는다.
-const DEFAULT_PAGE_SIZE = { width: 1752, height: 2273 };
+// 표준 페이지 캔버스 크기 — 세로형/가로형 두 가지뿐이고, 가로형은 세로형을 그대로
+// 90도 돌린 값(가로/세로 치수를 맞바꾼 것)이라 비율은 항상 같다. 세 군데서 쓰는
+// "표준" 크기다: (1) getPageViewport1()이 참조할 페이지가 전혀 없을 때(PDF도 없고
+// entry도 없을 때)의 안전한 대체값(항상 세로형), (2) 템플릿(백지/줄노트/모눈) 페이지를
+// 새로 삽입할 때 쓰는 고정 크기, (3) 사진 페이지를 새로 삽입할 때의 캔버스 크기(사진은
+// 이 캔버스 안에 원본 비율 그대로 contain 방식으로 들어가고 남는 여백은 흰색 —
+// confirmPhotoPageInsert() 참고). (2)/(3) 둘 다 페이지 삽입 모달에서 고른 방향
+// (piSelectedOrientation)에 따라 이 둘 중 하나를 골라 쓴다 — 아래 confirmPageInsert()의
+// 주석 참고: "옆 페이지 크기를 베껴온다"나 "사진 원본 비율대로 페이지 크기를 정한다"가
+// 아니라 "항상 이 표준 크기(둘 중 선택) 그대로 만든다"여야 페이지마다 크기가
+// 들쭉날쭉해지거나 옆 페이지로 오염되지 않는다.
+const PAGE_SIZE_PORTRAIT = { width: 1752, height: 2273 };
+const PAGE_SIZE_LANDSCAPE = { width: 2273, height: 1752 };
+const DEFAULT_PAGE_SIZE = PAGE_SIZE_PORTRAIT;
+function pageSizeForOrientation(o) { return o === 'landscape' ? PAGE_SIZE_LANDSCAPE : PAGE_SIZE_PORTRAIT; }
+// 페이지 삽입 모달의 기본 방향(자동 선택값) 계산용 — 저장된 orientation 필드가 따로
+// 있는 게 아니라, 이미 저장돼 있는 실제 width/height의 대소 관계로 그때그때 판단한다.
+function orientationOfEntry(entry) { return (entry && entry.width > entry.height) ? 'landscape' : 'portrait'; }
 const Engine = AnnotationEngine;
 
 let pdfDoc = null, totalPg = 0, curPage = 1, activeInkPage = null;
@@ -400,7 +409,7 @@ function toolbarDeleteCurrentPage() {
   deletePageAt(curPage);
 }
 
-let pageInsertCtx = null, piSelectedTemplate = 'blank';
+let pageInsertCtx = null, piSelectedTemplate = 'blank', piSelectedOrientation = 'portrait';
 function selectPageTemplate(t, el) {
   piSelectedTemplate = t;
   document.querySelectorAll('.pi-template').forEach(x => x.classList.remove('on'));
@@ -408,6 +417,11 @@ function selectPageTemplate(t, el) {
   // 사진 한 장 = 페이지 한 장 — "삽입 매수"는 blank/lined/grid에만 의미가 있다.
   const countRow = document.getElementById('pi-count-row');
   if (countRow) countRow.style.display = (t === 'photo') ? 'none' : '';
+}
+function selectPageOrientation(o, el) {
+  piSelectedOrientation = o;
+  document.querySelectorAll('.pi-orient').forEach(x => x.classList.remove('on'));
+  el.classList.add('on');
 }
 function openPageInsertModal(afterPos) {
   const remaining = Engine.PageOrder.MAX_INSERTED_PAGES - Engine.PageOrder.countInsertedPages();
@@ -417,6 +431,12 @@ function openPageInsertModal(afterPos) {
   document.getElementById('pi-count-row').style.display = '';
   const countInput = document.getElementById('pi-count'); countInput.value = 1; countInput.max = remaining;
   document.getElementById('pi-remaining').textContent = '최대 ' + remaining + '장 더 삽입할 수 있어요';
+  // 기본 방향 = "직전 페이지와 동일한 방향" — afterPos는 새 페이지가 들어갈 바로 앞
+  // 위치(0이면 맨 앞=직전 페이지 없음)라, 거기 있는 페이지의 실제 width/height로
+  // 판단한다. 노트에 페이지가 아예 없거나 직전 페이지 정보를 못 찾으면 세로가 기본.
+  const prevEntry = afterPos > 0 ? Engine.PageOrder.getOrderEntry(afterPos) : null;
+  piSelectedOrientation = orientationOfEntry(prevEntry);
+  document.querySelectorAll('.pi-orient').forEach(el => el.classList.toggle('on', el.dataset.o === piSelectedOrientation));
   document.getElementById('page-insert-modal').classList.add('open');
 }
 function closePageInsertModal() { document.getElementById('page-insert-modal').classList.remove('open'); pageInsertCtx = null; }
@@ -425,13 +445,14 @@ async function confirmPageInsert() {
   if (piSelectedTemplate === 'photo') { await confirmPhotoPageInsert(); return; }
   const { afterPos } = pageInsertCtx;
   let count = parseInt(document.getElementById('pi-count').value, 10) || 1;
-  // 항상 표준 크기(DEFAULT_PAGE_SIZE)로 만든다 — 예전에는 getPageViewport1(afterPos)로
-  // "바로 옆 페이지"의 크기를 그대로 베껴왔는데, 사진 페이지는 페이지마다 크기가
-  // 제각각이라(각자 원본 사진 비율) 사진 바로 뒤에 템플릿 페이지를 삽입하면 그
-  // 사진 크기를 물려받고, 그 뒤에 또 삽입하면 그걸 또 물려받는 식으로 계속
-  // 오염되어 퍼져나갔다. 템플릿 페이지의 크기는 옆에 뭐가 있든 항상 고정이어야
-  // 한다 — 페이지 크기는 각 페이지 자신만의 값이지, 이웃에게서 물려받는 값이 아니다.
-  const result = Engine.PageOrder.insertPages(afterPos, count, piSelectedTemplate, DEFAULT_PAGE_SIZE);
+  // 항상 표준 크기(PAGE_SIZE_PORTRAIT/PAGE_SIZE_LANDSCAPE 중 모달에서 고른 방향)로
+  // 만든다 — 예전에는 getPageViewport1(afterPos)로 "바로 옆 페이지"의 크기를 그대로
+  // 베껴왔는데, 사진 페이지는 페이지마다 크기가 제각각이라(각자 원본 사진 비율) 사진
+  // 바로 뒤에 템플릿 페이지를 삽입하면 그 사진 크기를 물려받고, 그 뒤에 또 삽입하면
+  // 그걸 또 물려받는 식으로 계속 오염되어 퍼져나갔다. 템플릿 페이지의 크기는 옆에
+  // 뭐가 있든(방향 선택 제외) 항상 고정이어야 한다 — 페이지 크기는 각 페이지 자신만의
+  // 값이지, 이웃에게서 물려받는 값이 아니다.
+  const result = Engine.PageOrder.insertPages(afterPos, count, piSelectedTemplate, pageSizeForOrientation(piSelectedOrientation));
   totalPg = result.totalPages || totalPg;
   if (result.firstPos) curPage = Math.max(1, Math.min(totalPg, result.firstPos));
   closePageInsertModal();
@@ -448,6 +469,10 @@ async function confirmPageInsert() {
 // 한계로 문서화되어 있다.
 async function confirmPhotoPageInsert() {
   if (!(await Engine.Storage.ping())) { showToast('📴 오프라인 상태에서는 사진 페이지를 추가할 수 없어요'); return; }
+  // 파일 선택 대화상자가 뜬 동안 모달은 이미 닫히므로, 방향은 지금(확인 누른 시점)
+  // 값을 미리 붙잡아둔다 — 콜백 시점에 전역 piSelectedOrientation을 다시 읽으면
+  // 그 사이 다른 페이지 삽입 모달이 열려 값이 바뀌었을 가능성을 배제할 수 없다.
+  const orientation = piSelectedOrientation;
   const input = document.createElement('input'); input.type = 'file'; input.accept = 'image/*';
   input.onchange = async () => {
     const file = input.files && input.files[0]; if (!file) return;
@@ -462,12 +487,13 @@ async function confirmPhotoPageInsert() {
       if (!path) { showToast('사진 업로드에 실패했어요 — 다시 시도해주세요'); return; }
       // 페이지의 "논리적 크기"(entry.width/height — 캔버스·잉크 좌표 공간, 화면에
       // 실제로 그려질 크기)는 업로드된 사진 파일의 실제 픽셀 수와 무관하게 항상
-      // DEFAULT_PAGE_SIZE로 고정한다(다른 템플릿 페이지와 완전히 동일한 캔버스 크기).
-      // 사진의 원본 비율은 naturalWidth/naturalHeight로 따로 저장해두고, 실제 렌더링
+      // 표준 크기(모달에서 고른 방향의 PAGE_SIZE_PORTRAIT/LANDSCAPE)로 고정한다(다른
+      // 템플릿 페이지와 완전히 동일한 캔버스 크기, 방향만 다를 수 있음). 사진의 원본
+      // 비율은 naturalWidth/naturalHeight로 따로 저장해두고, 실제 렌더링
       // (buildPagePhotoNode)에서 이 캔버스 안에 비율을 유지한 채 contain 방식으로
       // 맞춰 그린다 — 남는 여백은 흰색. 실제 이미지 파일은 원본 해상도 그대로
       // 남아있으므로 확대해서 봐도 화질 저하는 없다.
-      const result = Engine.PageOrder.insertPages(ctx.afterPos, 1, 'photo', DEFAULT_PAGE_SIZE, { id: localPageId, photoUrl: path, rotationDegrees: 0, naturalWidth: width, naturalHeight: height });
+      const result = Engine.PageOrder.insertPages(ctx.afterPos, 1, 'photo', pageSizeForOrientation(orientation), { id: localPageId, photoUrl: path, rotationDegrees: 0, naturalWidth: width, naturalHeight: height });
       totalPg = result.totalPages || totalPg;
       if (result.firstPos) curPage = Math.max(1, Math.min(totalPg, result.firstPos));
       showToast('📷 사진 페이지를 추가했어요');
@@ -480,7 +506,8 @@ async function confirmPhotoPageInsert() {
 // 시 한 번뿐인" 준비 단계이고, 이후 회전은 이 압축본을 다시 건드리지 않고 항상 CSS
 // transform으로만 적용한다(rotatePhotoPage). 여기서 나오는 width/height는 "업로드할
 // 파일의 실제 픽셀 수"이자 원본 비율(naturalWidth/naturalHeight)이다 — 페이지 캔버스
-// 크기(entry.width/height)는 이것과 무관하게 항상 DEFAULT_PAGE_SIZE로 고정된다.
+// 크기(entry.width/height)는 이것과 무관하게 항상 표준 크기(모달에서 고른 방향의
+// PAGE_SIZE_PORTRAIT/LANDSCAPE)로 고정된다.
 const COMPRESS_MAX_EDGE = 2000;
 function compressPhotoForPage(file) {
   return new Promise((resolve, reject) => {
@@ -640,7 +667,7 @@ function updatePageInfo() {
 }
 // 상단 툴바의 캔버스 크기 배지 — "실제 페이지 크기 x 현재 확대율"만 보여주는
 // 표시 전용 함수라 필기/레이어 로직과는 무관하다. 크기는 항상 entry.width/height
-// (페이지 자신의 실제 캔버스 크기, workspace/viewer.js 상단 DEFAULT_PAGE_SIZE 참고)
+// (페이지 자신의 실제 캔버스 크기, workspace/viewer.js 상단 PAGE_SIZE_PORTRAIT/LANDSCAPE 참고)
 // 에서 그대로 읽어오므로 가로형 페이지가 추가돼도 하드코딩 없이 자동으로 맞는 값이
 // 뜬다. renderPages()가 끝날 때마다(페이지 전환/줌 변경/레이아웃 변경 등) 호출되는
 // updatePageInfo()에 얹혀 있어 항상 최신 상태로 갱신된다.

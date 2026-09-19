@@ -315,6 +315,9 @@ body{font-family:var(--font);background:var(--bg);color:var(--ink);height:100vh;
 .pi-template{flex:1;border:1.5px solid var(--border);border-radius:10px;padding:8px;text-align:center;cursor:pointer;font-size:11px;color:var(--ink-mid);}
 .pi-template.on{border-color:var(--accent);color:var(--accent);background:var(--accent-light);}
 .pi-template svg{display:block;margin:0 auto 6px;border-radius:3px;}
+.pi-orient-group{display:flex;gap:6px;flex:1;}
+.pi-orient{flex:1;padding:7px 8px;border-radius:8px;border:1.5px solid var(--border);background:none;font-size:12px;color:var(--ink-mid);cursor:pointer;font-family:var(--font);}
+.pi-orient.on{border-color:var(--accent);color:var(--accent);background:var(--accent-light);font-weight:700;}
 
 .pdf-search-bar{height:40px;background:rgba(232,64,28,0.05);border-bottom:1px solid var(--border);display:none;align-items:center;padding:0 12px;gap:8px;flex-shrink:0;}
 .pdf-search-bar.show{display:flex;}
@@ -549,6 +552,13 @@ body{font-family:var(--font);background:var(--bg);color:var(--ink);height:100vh;
       <div class="pi-template" data-t="lined" onclick="selectPageTemplate('lined',this)"><svg width="52" height="70" viewBox="0 0 52 70"><rect x="0.5" y="0.5" width="51" height="69" fill="#fff" stroke="#d8d4c8"/><g stroke="#d8d4c8"><line x1="6" y1="14" x2="46" y2="14"/><line x1="6" y1="26" x2="46" y2="26"/><line x1="6" y1="38" x2="46" y2="38"/><line x1="6" y1="50" x2="46" y2="50"/><line x1="6" y1="62" x2="46" y2="62"/></g></svg><span>줄노트</span></div>
       <div class="pi-template" data-t="grid" onclick="selectPageTemplate('grid',this)"><svg width="52" height="70" viewBox="0 0 52 70"><rect x="0.5" y="0.5" width="51" height="69" fill="#fff" stroke="#d8d4c8"/><g stroke="#d8d4c8"><line x1="14" y1="0" x2="14" y2="70"/><line x1="26" y1="0" x2="26" y2="70"/><line x1="38" y1="0" x2="38" y2="70"/><line x1="0" y1="14" x2="52" y2="14"/><line x1="0" y1="26" x2="52" y2="26"/><line x1="0" y1="38" x2="52" y2="38"/><line x1="0" y1="50" x2="52" y2="50"/><line x1="0" y1="62" x2="52" y2="62"/></g></svg><span>모눈</span></div>
       <div class="pi-template" data-t="photo" onclick="selectPageTemplate('photo',this)"><svg width="52" height="70" viewBox="0 0 52 70"><rect x="0.5" y="0.5" width="51" height="69" fill="#fff" stroke="#d8d4c8"/><rect x="9" y="15" width="34" height="26" fill="none" stroke="#d8d4c8" stroke-width="1.6"/><circle cx="17" cy="23" r="2.4" fill="#d8d4c8"/><path d="M11 39l8-8 6 6 6-6 8 8" fill="none" stroke="#d8d4c8" stroke-width="1.6"/></svg><span>📷 사진</span></div>
+    </div>
+    <div class="em-row" id="pi-orientation-row">
+      <span class="pt-size" style="color:var(--ink-mid);">방향</span>
+      <div class="pi-orient-group">
+        <button type="button" class="pi-orient on" data-o="portrait" onclick="selectPageOrientation('portrait',this)">📄 세로</button>
+        <button type="button" class="pi-orient" data-o="landscape" onclick="selectPageOrientation('landscape',this)">📄 가로</button>
+      </div>
     </div>
     <div class="em-row" id="pi-count-row"><span class="pt-size" style="color:var(--ink-mid);">삽입 매수</span><input type="number" class="em-num" id="pi-count" min="1" value="1"></div>
     <div class="em-hint" id="pi-remaining"></div>
