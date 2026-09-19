@@ -23,7 +23,7 @@
 // SHELL_CACHE/CONTENT_CACHE가 아닌 캐시를 전부 지우므로, 번호를 올리면 옛 SHELL_CACHE가
 // 자동으로 삭제되고 새 코드가 다시 캐싱된다. 번호를 안 올리면 배포해도 사용자 브라우저에
 // 옛 코드가 계속 남을 수 있다.
-const SW_VERSION = 'v10';
+const SW_VERSION = 'v11';
 const SHELL_CACHE = 'kth-shell-' + SW_VERSION;
 // CONTENT_CACHE는 SW_VERSION과 별개로 관리한다 — 교재 PDF/오프라인 저장본이 들어있어서,
 // 앱 셸 코드만 바뀐 배포마다 같이 버전을 올리면 사용자가 이미 받아둔 대용량 PDF까지
@@ -43,6 +43,7 @@ const SHELL_URLS = [
   'https://fonts.googleapis.com/css2?family=Noto+Sans+KR:wght@300;400;500;700;900&family=DM+Mono:wght@400;500&display=swap',
   'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js',
   'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js',
+  'https://cdnjs.cloudflare.com/ajax/libs/jspdf/4.2.1/jspdf.umd.min.js',
 ];
 
 self.addEventListener('install', event => {

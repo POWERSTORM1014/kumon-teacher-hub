@@ -383,6 +383,7 @@ body{font-family:var(--font);background:var(--bg);color:var(--ink);height:100vh;
       <button class="vt-btn" id="vt-layers" onclick="openLayerPanel()">🗂 레이어</button>
       <div class="vt-sep"></div>
       <button class="vt-btn" onclick="openBookmark()">🔖 목차</button>
+      <button class="vt-btn" id="vt-export-pdf" onclick="exportBookAsPdf()" title="전체 페이지를 PDF 파일로 내보내기">📥 PDF로 내보내기</button>
       <div class="vt-sep"></div>
       <button class="vt-btn" id="vt-insert-page" onclick="openToolbarInsertMenu(event)" title="페이지 삽입">➕📄</button>
       <button class="vt-btn" onclick="toolbarDeleteCurrentPage()" title="페이지 삭제">🗑📄</button>
@@ -601,6 +602,7 @@ body{font-family:var(--font);background:var(--bg);color:var(--ink);height:100vh;
 <div class="toast toast-action" id="toast-action"><span id="toast-action-msg"></span><button id="toast-action-btn" class="toast-action-btn"></button></div>
 
 <script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/4.2.1/jspdf.umd.min.js"></script>
 <script src="../shared/annotation-engine.js"></script>
 <script src="viewer.js"></script>
 </body>

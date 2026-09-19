@@ -705,6 +705,146 @@ function rotateCurrentPhotoPage() {
   showToast('🔄 사진을 회전했어요');
 }
 
+/* ══ PDF 내보내기 — 전체 페이지를 순서대로 하나의 PDF로 합침 ═══════════════
+   jsPDF(workspace/viewer.html에서 CDN으로 로드)만 새로 추가했고, 필기/레이어
+   데이터는 Engine.Elements/Engine.Ink의 기존 읽기 전용 API만 그대로 재사용한다
+   — saveLayer/loadLayer 자체나 화면 렌더링 로직(mountPage/redrawPage 등)은
+   전혀 건드리지 않는다. */
+// 사진/삽입 이미지는 R2 공개 버킷(다른 오리진)에서 온다 — crossOrigin='anonymous'
+// 없이 캔버스에 그리면 "캔버스 오염"으로 canvas.toDataURL()이 예외를 던진다.
+// 그 버킷 도메인이 Access-Control-Allow-Origin: * 를 이미 내려주는 것을 확인했다
+// (data: URL은 애초에 같은 오리진 취급이라 crossOrigin이 필요 없어 건너뛴다).
+function loadImageForExport(src) {
+  return new Promise((resolve, reject) => {
+    const img = new Image();
+    if (!src.startsWith('data:')) img.crossOrigin = 'anonymous';
+    img.onload = () => resolve(img);
+    img.onerror = () => reject(new Error('image load failed: ' + src));
+    img.src = src;
+  });
+}
+// buildPagePhotoNode()(shared/annotation-engine.js)와 완전히 같은 contain-fit
+// 계산을 캔버스 버전으로 옮긴 것 — 캔버스 중심을 기준으로 회전시키면 DOM 버전처럼
+// 90/270도일 때 가로세로를 따로 맞바꿔줄 필요 없이 그대로 처리된다.
+function drawPhotoBackgroundForExport(ctx, img, w, h, entry) {
+  const rot = entry.rotationDegrees || 0;
+  const rotated = (rot === 90 || rot === 270);
+  const preW = rotated ? h : w, preH = rotated ? w : h;
+  let fitW = preW, fitH = preH;
+  if (entry.naturalWidth > 0 && entry.naturalHeight > 0) {
+    const scale = Math.min(preW / entry.naturalWidth, preH / entry.naturalHeight);
+    fitW = entry.naturalWidth * scale; fitH = entry.naturalHeight * scale;
+  }
+  ctx.save();
+  ctx.translate(w / 2, h / 2);
+  if (rot) ctx.rotate(rot * Math.PI / 180);
+  ctx.drawImage(img, -fitW / 2, -fitH / 2, fitW, fitH);
+  ctx.restore();
+}
+// buildImageNode()의 회전/뒤집기/투명도/밝기를 캔버스로 재현 — 요소 중심을 기준으로
+// 통째로 회전시키므로, DOM 버전이 90/270도에서 하던 width/height 맞바꿈이 필요 없다.
+function drawImageElementForExport(ctx, img, el) {
+  ctx.save();
+  if (el.opacity != null) ctx.globalAlpha = el.opacity;
+  if (el.brightness != null && el.brightness !== 1) ctx.filter = 'brightness(' + el.brightness + ')';
+  const cx = el.x + el.width / 2, cy = el.y + el.height / 2;
+  ctx.translate(cx, cy);
+  const rot = el.rotation || 0;
+  if (rot) ctx.rotate(rot * Math.PI / 180);
+  ctx.scale(el.flipH ? -1 : 1, el.flipV ? -1 : 1);
+  ctx.drawImage(img, -el.width / 2, -el.height / 2, el.width, el.height);
+  ctx.restore();
+}
+// buildTextNode()의 폰트/색/굵기를 재현한다. .el-text의 white-space:pre-wrap 중
+// "명시적 줄바꿈"(\n)만 반영하고, 긴 한 줄이 화면 폭에 맞춰 저절로 접히는 자동
+// 줄바꿈까지는 재현하지 않는다 — 캔버스 텍스트는 줄바꿈 폭 계산을 직접 구현해야
+// 해서 이번 범위 밖으로 남겨둔 알려진 한계다.
+const EXPORT_TEXT_FONT_CSS = { gothic: "'Noto Sans KR',sans-serif", serif: "'Noto Serif KR',serif", handwriting: "'Gaegu',cursive" };
+function drawTextElementForExport(ctx, el) {
+  ctx.save();
+  const fontSize = el.fontSize || 16;
+  ctx.font = (el.bold ? 'bold ' : '') + fontSize + 'px ' + (EXPORT_TEXT_FONT_CSS[el.fontFamily] || EXPORT_TEXT_FONT_CSS.gothic);
+  ctx.fillStyle = el.color || '#1a1814';
+  ctx.textBaseline = 'top';
+  const lineHeight = fontSize * 1.3;
+  (el.content || '').split('\n').forEach((line, i) => ctx.fillText(line, el.x + 4, el.y + 2 + i * lineHeight));
+  ctx.restore();
+}
+// 페이지 하나를 "배경 + 필기 + 삽입 요소"가 전부 합쳐진 하나의 캔버스로 그린다.
+// 필기(펜/형광펜/지우개)는 Engine.Ink.renderLayersToCanvas()(화면에 실제 그려지는
+// 것과 완전히 같은 함수, shared/annotation-engine.js)를 그대로 재사용하므로
+// 필기가 빠질 일이 없다. 오디오/영상 핀(el.type==='media')은 인쇄물에 의미가
+// 없어 제외한다.
+async function renderPageToExportCanvas(pos, entry) {
+  const w = entry.width, h = entry.height;
+  const canvas = document.createElement('canvas');
+  canvas.width = w; canvas.height = h;
+  const ctx = canvas.getContext('2d');
+  ctx.fillStyle = '#ffffff'; ctx.fillRect(0, 0, w, h);
+  if (entry.template === 'photo' && entry.photoUrl) {
+    try {
+      const img = await loadImageForExport(Engine.Storage.normalizeAssetSrc(entry.photoUrl));
+      drawPhotoBackgroundForExport(ctx, img, w, h, entry);
+    } catch (e) { console.warn('[viewer] PDF 내보내기 — 사진 배경을 못 불러옴', entry.photoUrl, e); }
+  } else {
+    Engine.Page.templateBackground(ctx, w, h, entry.template);
+  }
+  const layers = Engine.Elements.getLayerList(pos);
+  const strokesByLayer = Engine.Elements.getAllElements(pos);
+  Engine.Ink.renderLayersToCanvas(ctx, layers, strokesByLayer, 1, w, h);
+  for (const layer of layers) {
+    if (layer.visible === false) continue;
+    for (const el of Engine.Elements.getElements(pos, layer.id)) {
+      if (el.type === 'image') {
+        try {
+          const img = await loadImageForExport(Engine.Storage.normalizeAssetSrc(el.src));
+          drawImageElementForExport(ctx, img, el);
+        } catch (e) { console.warn('[viewer] PDF 내보내기 — 삽입 이미지를 못 불러옴', el.src, e); }
+      } else if (el.type === 'text') {
+        drawTextElementForExport(ctx, el);
+      }
+    }
+  }
+  return canvas;
+}
+function sanitizeExportFilename(name) {
+  const cleaned = (name || '').replace(/[\\/:*?"<>|]/g, '').trim();
+  return (cleaned || '나의노트') + '.pdf';
+}
+async function exportBookAsPdf() {
+  if (!totalPg) { showToast('내보낼 페이지가 없어요'); return; }
+  if (!(window.jspdf && window.jspdf.jsPDF)) { showToast('PDF 기능을 불러오지 못했어요 — 인터넷 연결을 확인해주세요'); return; }
+  const btn = document.getElementById('vt-export-pdf');
+  if (btn) btn.disabled = true;
+  try {
+    showToast('📥 PDF 변환을 시작해요...');
+    const { jsPDF } = window.jspdf;
+    let doc = null;
+    // 한 번에 다 만들지 않고 페이지 하나씩 캔버스→JPEG로 변환해서 바로 PDF에
+    // 추가한 뒤 버린다 — 50장이 넘어가도 한 번에 메모리에 남는 건 캔버스 한 장
+    // 뿐이라 안전하다. JPEG 0.85 품질은 compressPhotoForPage()와 같은 압축 관례.
+    for (let p = 1; p <= totalPg; p++) {
+      const entry = Engine.PageOrder.getOrderEntry(p);
+      if (!entry || entry.kind !== 'inserted') continue; // 이 뷰어는 항상 true — 방어적으로만 체크
+      showToast('📥 ' + p + '/' + totalPg + ' 페이지 변환 중...');
+      const canvas = await renderPageToExportCanvas(p, entry);
+      const imgData = canvas.toDataURL('image/jpeg', 0.85);
+      const orientation = canvas.width >= canvas.height ? 'landscape' : 'portrait';
+      if (!doc) doc = new jsPDF({ unit: 'px', format: [canvas.width, canvas.height], orientation, compress: true });
+      else doc.addPage([canvas.width, canvas.height], orientation);
+      doc.addImage(imgData, 'JPEG', 0, 0, canvas.width, canvas.height);
+    }
+    if (!doc) { showToast('내보낼 페이지가 없어요'); return; }
+    doc.save(sanitizeExportFilename(currentBookTitle));
+    showToast('✅ PDF로 내보냈어요');
+  } catch (e) {
+    console.warn('[viewer] PDF 내보내기 실패', e);
+    showToast('PDF로 내보내지 못했어요');
+  } finally {
+    if (btn) btn.disabled = false;
+  }
+}
+
 function deletePageAt(pos) {
   const entry = Engine.PageOrder.getOrderEntry(pos);
   if (!entry || entry.kind !== 'inserted') return;
