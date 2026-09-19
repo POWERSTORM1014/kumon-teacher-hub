@@ -96,6 +96,7 @@ body{font-family:var(--font);background:var(--bg);color:var(--ink);height:100vh;
 .vt-btn.on{background:var(--accent);color:#fff;border-color:var(--accent);}
 .vt-sep{width:1px;height:20px;background:var(--border);flex-shrink:0;}
 .vt-info{font-size:11px;font-family:var(--mono);color:var(--ink-mid);white-space:nowrap;}
+.vt-canvas-badge{font-size:11px;font-family:var(--mono);color:var(--ink-mid);white-space:nowrap;background:var(--border);padding:3px 10px;border-radius:999px;}
 .vt-spacer{flex:1;}
 .vt-back{padding:5px 12px;border-radius:7px;border:1px solid var(--border);background:none;font-size:12px;color:var(--ink-mid);cursor:pointer;font-family:var(--font);}
 
@@ -363,6 +364,7 @@ body{font-family:var(--font);background:var(--bg);color:var(--ink);height:100vh;
       <button class="vt-btn" onclick="chZoom(10)">+</button>
       <button class="vt-btn" onclick="fitToWidth()">폭 맞춤</button>
       <button class="vt-btn" onclick="fitToHeight()">높이 맞춤</button>
+      <span class="vt-canvas-badge" id="vt-canvas-badge"></span>
       <div class="vt-sep"></div>
       <button class="vt-btn on" id="vt-single" onclick="setLayout('single')">단면</button>
       <button class="vt-btn" id="vt-double" onclick="setLayout('double')">양면</button>

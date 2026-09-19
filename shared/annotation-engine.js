@@ -1134,8 +1134,14 @@
     // "나의 폴더" 사진 페이지 전용 배경 노드 — el.rotation(buildImageNode)과 완전히
     // 같은 CSS transform 기법으로만 회전을 표현한다. 원본 파일을 캔버스에 다시 그려
     // 재인코딩하지 않으므로, 몇 번을 돌려도 화질 손실이 없고 원본 바이트는 불변이다.
-    // photo: { url, rotationDegrees(0/90/180/270) }. mountPage를 부르는 쪽이 opts.photo를
-    // 안 넘기면(자료실/과목 뷰어는 절대 안 넘김) 이 노드 자체가 생성되지 않는다.
+    // photo: { url, rotationDegrees(0/90/180/270), naturalWidth, naturalHeight }. mountPage를
+    // 부르는 쪽이 opts.photo를 안 넘기면(자료실/과목 뷰어는 절대 안 넘김) 이 노드 자체가
+    // 생성되지 않는다. naturalWidth/naturalHeight가 있으면(새로 삽입한 사진 페이지) 캔버스
+    // (widthPx×heightPx, 항상 표준 크기) 안에 원본 비율을 유지한 채 contain 방식으로
+    // 축소/확대해 넣는다 — 남는 여백은 이미 흰색으로 칠해진 배경(templateBackground)이
+    // 그대로 비쳐 보인다. 옛날에 만들어진 사진 페이지(naturalWidth/naturalHeight가 없고
+    // 캔버스 자체가 사진 비율로 만들어져 있던 페이지)는 그 필드가 없으므로 이 분기를
+    // 타지 않고 예전과 똑같이 캔버스 전체를 꽉 채운다 — 기존 페이지 모양은 바뀌지 않는다.
     function buildPagePhotoNode(widthPx, heightPx, photo) {
       const wrap = document.createElement('div');
       wrap.className = 'page-photo-bg';
@@ -1144,13 +1150,19 @@
       img.className = 'page-photo-img'; img.draggable = false; img.alt = '';
       img.src = Storage.normalizeAssetSrc(photo.url);
       const rot = photo.rotationDegrees || 0;
-      if (rot === 90 || rot === 270) {
-        img.style.width = heightPx + 'px'; img.style.height = widthPx + 'px';
-        img.style.transform = 'translate(-50%,-50%) rotate(' + rot + 'deg)';
-      } else {
-        img.style.width = widthPx + 'px'; img.style.height = heightPx + 'px';
-        img.style.transform = 'translate(-50%,-50%)' + (rot === 180 ? ' rotate(180deg)' : '');
+      const rotated = (rot === 90 || rot === 270);
+      // preW/preH: 회전을 적용하기 "전" 좌표계에서 이미지가 채울 수 있는 최대 영역.
+      // 90/270도 회전은 가로세로 축이 서로 바뀌므로, 화면상 widthPx×heightPx 프레임을
+      // 채우려면 회전 전 이미지는 heightPx×widthPx 안에 들어가야 한다.
+      const preW = rotated ? heightPx : widthPx, preH = rotated ? widthPx : heightPx;
+      let fitW = preW, fitH = preH;
+      if (photo.naturalWidth > 0 && photo.naturalHeight > 0) {
+        const scale = Math.min(preW / photo.naturalWidth, preH / photo.naturalHeight);
+        fitW = Math.max(1, photo.naturalWidth * scale);
+        fitH = Math.max(1, photo.naturalHeight * scale);
       }
+      img.style.width = fitW + 'px'; img.style.height = fitH + 'px';
+      img.style.transform = 'translate(-50%,-50%)' + (rot ? ' rotate(' + rot + 'deg)' : '');
       wrap.appendChild(img);
       return wrap;
     }

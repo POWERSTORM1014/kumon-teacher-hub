@@ -11,13 +11,15 @@ pdfjsLib.GlobalWorkerOptions.workerSrc = 'https://cdnjs.cloudflare.com/ajax/libs
 
 const CACHE_NAME = 'kth-content-v1'; // sw.js의 CONTENT_CACHE와 반드시 동일해야 함(모든 과목/자료실/워크스페이스 공용 캐시 버킷)
 const CURRENT_VIEWER_PATH = 'workspace/viewer.html';
-// A4 비율 — 두 군데서 쓰는 "표준" 크기다: (1) getPageViewport1()이 참조할 페이지가
-// 전혀 없을 때(PDF도 없고 entry도 없을 때)의 안전한 대체값, (2) 템플릿(백지/줄노트/
-// 모눈) 페이지를 새로 삽입할 때 항상 쓰는 고정 크기. (2)가 중요한 이유는 아래
-// confirmPageInsert()의 주석 참고 — "옆 페이지 크기를 베껴온다"가 아니라 "항상
-// 이 표준 크기로 만든다"여야 사진 페이지처럼 크기가 들쭉날쭉한 페이지 옆에
-// 삽입해도 오염되지 않는다.
-const DEFAULT_PAGE_SIZE = { width: 595, height: 842 };
+// 표준 페이지 캔버스 크기 — 세 군데서 쓰는 "표준" 크기다: (1) getPageViewport1()이
+// 참조할 페이지가 전혀 없을 때(PDF도 없고 entry도 없을 때)의 안전한 대체값, (2)
+// 템플릿(백지/줄노트/모눈) 페이지를 새로 삽입할 때 항상 쓰는 고정 크기, (3) 사진
+// 페이지를 새로 삽입할 때의 캔버스 크기(사진은 이 캔버스 안에 원본 비율 그대로
+// contain 방식으로 들어가고 남는 여백은 흰색— confirmPhotoPageInsert() 참고).
+// (2)/(3)이 중요한 이유는 아래 confirmPageInsert()의 주석 참고 — "옆 페이지 크기를
+// 베껴온다"나 "사진 원본 비율대로 페이지 크기를 정한다"가 아니라 "항상 이 표준
+// 크기로 만든다"여야 페이지마다 크기가 들쭉날쭉해지거나 옆 페이지로 오염되지 않는다.
+const DEFAULT_PAGE_SIZE = { width: 1752, height: 2273 };
 const Engine = AnnotationEngine;
 
 let pdfDoc = null, totalPg = 0, curPage = 1, activeInkPage = null;
@@ -243,9 +245,22 @@ async function buildThumbs() {
         // 썸네일은 매번 다시 그리는 일회성 미리보기라 여기서 캔버스에 그려 넣는 것은
         // "원본 재인코딩 금지" 원칙과 무관하다(원본 파일 자체는 절대 안 건드림).
         // 회전은 반영하지 않는다 — 작은 목록 아이콘용이라 실제 페이지에서만 정확하면 된다.
+        // naturalWidth/naturalHeight가 있는(새 방식) 사진 페이지는 실제 페이지와 똑같이
+        // contain 방식으로 그린다 — 없으면(옛 방식, 캔버스 자체가 사진 비율) 예전처럼
+        // 캔버스 전체를 꽉 채운다.
         Engine.Page.templateBackground(c.getContext('2d'), c.width, c.height, 'blank');
         const img = new Image();
-        img.onload = () => { try { c.getContext('2d').drawImage(img, 0, 0, c.width, c.height); } catch (e) { } };
+        img.onload = () => {
+          try {
+            let dw = c.width, dh = c.height, dx = 0, dy = 0;
+            if (entry.naturalWidth > 0 && entry.naturalHeight > 0) {
+              const scale = Math.min(c.width / entry.naturalWidth, c.height / entry.naturalHeight);
+              dw = entry.naturalWidth * scale; dh = entry.naturalHeight * scale;
+              dx = (c.width - dw) / 2; dy = (c.height - dh) / 2;
+            }
+            c.getContext('2d').drawImage(img, dx, dy, dw, dh);
+          } catch (e) { }
+        };
         img.src = Engine.Storage.normalizeAssetSrc(entry.photoUrl);
       } else {
         Engine.Page.templateBackground(c.getContext('2d'), c.width, c.height, entry.template);
@@ -446,15 +461,13 @@ async function confirmPhotoPageInsert() {
       const path = await Engine.Storage.uploadAsset(bookId, localPageId, 'image', dataUrl, 'photo.jpg', { dest: 'workspace-page', bookId, localPageId });
       if (!path) { showToast('사진 업로드에 실패했어요 — 다시 시도해주세요'); return; }
       // 페이지의 "논리적 크기"(entry.width/height — 캔버스·잉크 좌표 공간, 화면에
-      // 실제로 그려질 크기)는 업로드된 사진 파일의 실제 픽셀 수와 다른 값이다.
-      // 파일 해상도는 화질을 위해 최대 COMPRESS_MAX_EDGE까지 유지하지만, 그 픽셀
-      // 수를 페이지 크기로 그대로 쓰면 다른 템플릿 페이지(DEFAULT_PAGE_SIZE 기준
-      // ~600~840 단위)보다 훨씬 커서 "이 페이지만 유독 크게" 보인다. pageSizeForPhoto()
-      // 가 가로세로 비율은 정확히 그대로 두고(레터박스·잘림 없음) 크기만 다른
-      // 페이지들과 같은 스케일로 줄여준다 — 실제 이미지 파일은 그대로 원본 해상도로
+      // 실제로 그려질 크기)는 업로드된 사진 파일의 실제 픽셀 수와 무관하게 항상
+      // DEFAULT_PAGE_SIZE로 고정한다(다른 템플릿 페이지와 완전히 동일한 캔버스 크기).
+      // 사진의 원본 비율은 naturalWidth/naturalHeight로 따로 저장해두고, 실제 렌더링
+      // (buildPagePhotoNode)에서 이 캔버스 안에 비율을 유지한 채 contain 방식으로
+      // 맞춰 그린다 — 남는 여백은 흰색. 실제 이미지 파일은 원본 해상도 그대로
       // 남아있으므로 확대해서 봐도 화질 저하는 없다.
-      const pageSize = pageSizeForPhoto(width, height);
-      const result = Engine.PageOrder.insertPages(ctx.afterPos, 1, 'photo', pageSize, { id: localPageId, photoUrl: path, rotationDegrees: 0 });
+      const result = Engine.PageOrder.insertPages(ctx.afterPos, 1, 'photo', DEFAULT_PAGE_SIZE, { id: localPageId, photoUrl: path, rotationDegrees: 0, naturalWidth: width, naturalHeight: height });
       totalPg = result.totalPages || totalPg;
       if (result.firstPos) curPage = Math.max(1, Math.min(totalPg, result.firstPos));
       showToast('📷 사진 페이지를 추가했어요');
@@ -466,7 +479,8 @@ async function confirmPhotoPageInsert() {
 // 긴 변 기준 최대 COMPRESS_MAX_EDGE px로 줄이고 JPEG로 다시 인코딩한다 — 이건 "생성
 // 시 한 번뿐인" 준비 단계이고, 이후 회전은 이 압축본을 다시 건드리지 않고 항상 CSS
 // transform으로만 적용한다(rotatePhotoPage). 여기서 나오는 width/height는 "업로드할
-// 파일의 실제 픽셀 수"이지 페이지 크기가 아니다 — 페이지 크기는 pageSizeForPhoto() 참고.
+// 파일의 실제 픽셀 수"이자 원본 비율(naturalWidth/naturalHeight)이다 — 페이지 캔버스
+// 크기(entry.width/height)는 이것과 무관하게 항상 DEFAULT_PAGE_SIZE로 고정된다.
 const COMPRESS_MAX_EDGE = 2000;
 function compressPhotoForPage(file) {
   return new Promise((resolve, reject) => {
@@ -482,18 +496,6 @@ function compressPhotoForPage(file) {
     img.onerror = () => reject(new Error('image load failed'));
     img.src = URL.createObjectURL(file);
   });
-}
-// 사진 페이지의 "논리적 크기"(entry.width/height) 계산 — 가로세로 비율은 원본 그대로
-// 정확히 유지하면서(레터박스·강제 정사각형화 없음), 절대 크기만 DEFAULT_PAGE_SIZE와
-// 같은 스케일(긴 변 기준 STANDARD_PAGE_LONG_EDGE)로 맞춘다. 이걸 안 하면 압축 후에도
-// 여전히 최대 2000px에 달하는 사진 페이지가 ~600~840 단위인 다른 페이지들 옆에서
-// 유독 크게 렌더링된다 — "표준 캔버스에 fit"이 아니라 "같은 자(scale)로 다시 잰다"는
-// 차이다: 비율은 100% 원본 그대로, 숫자만 다른 페이지와 같은 자릿수로 내려온다.
-const STANDARD_PAGE_LONG_EDGE = DEFAULT_PAGE_SIZE.height;
-function pageSizeForPhoto(naturalW, naturalH) {
-  const long = Math.max(naturalW, naturalH) || 1;
-  const scale = STANDARD_PAGE_LONG_EDGE / long;
-  return { width: Math.max(1, Math.round(naturalW * scale)), height: Math.max(1, Math.round(naturalH * scale)) };
 }
 // 사진 페이지 전용 — 원본은 절대 다시 그리지 않고 90도씩 회전값만 순환시킨다.
 // 화면 반영은 rotatePhotoPage()가 내는 structure-changed 신호가 처리한다.
@@ -563,7 +565,7 @@ async function renderOnePage(container, pos, scale) {
   const mounted = Engine.Page.mountPage(wrap, {
     pos, widthPx: vp.width, heightPx: vp.height, scale,
     template: isInserted ? entry.template : 'blank',
-    photo: (isInserted && entry.template === 'photo') ? { url: entry.photoUrl, rotationDegrees: entry.rotationDegrees || 0 } : undefined,
+    photo: (isInserted && entry.template === 'photo') ? { url: entry.photoUrl, rotationDegrees: entry.rotationDegrees || 0, naturalWidth: entry.naturalWidth, naturalHeight: entry.naturalHeight } : undefined,
     onElementPlacement: (kind, p, layerId, x, y) => { setActiveInkPage(p); if (kind === 'text') openTextElementModal(p, layerId, x, y, null); else openMediaElementModal(p, layerId, x, y, null); },
     onTextTap: (p, layerId, el) => openTextElementModal(p, layerId, el.x, el.y, el),
     onImageTap: (p, layerId, el) => openImageElementModal(p, layerId, el),
@@ -634,6 +636,19 @@ function updatePageInfo() {
   const isInserted = !!(entry && entry.kind === 'inserted');
   document.getElementById('vt-page-info').textContent = totalPg ? (curPage + ' / ' + totalPg) : '0 / 0';
   document.getElementById('sb-page').textContent = !totalPg ? '페이지 없음' : (isInserted ? (entry.label || '새 페이지') : ('PDF ' + (entry ? entry.pdfPage : curPage) + 'p'));
+  updateCanvasBadge(entry);
+}
+// 상단 툴바의 캔버스 크기 배지 — "실제 페이지 크기 x 현재 확대율"만 보여주는
+// 표시 전용 함수라 필기/레이어 로직과는 무관하다. 크기는 항상 entry.width/height
+// (페이지 자신의 실제 캔버스 크기, workspace/viewer.js 상단 DEFAULT_PAGE_SIZE 참고)
+// 에서 그대로 읽어오므로 가로형 페이지가 추가돼도 하드코딩 없이 자동으로 맞는 값이
+// 뜬다. renderPages()가 끝날 때마다(페이지 전환/줌 변경/레이아웃 변경 등) 호출되는
+// updatePageInfo()에 얹혀 있어 항상 최신 상태로 갱신된다.
+function updateCanvasBadge(entry) {
+  const badge = document.getElementById('vt-canvas-badge');
+  if (!badge) return;
+  if (!totalPg || !entry || !entry.width || !entry.height) { badge.textContent = ''; return; }
+  badge.textContent = Math.round(entry.width) + ' x ' + Math.round(entry.height) + ' · ' + zoom + '%';
 }
 
 /* ══ 필기 툴바 ════════════════════════════════════════════ */
