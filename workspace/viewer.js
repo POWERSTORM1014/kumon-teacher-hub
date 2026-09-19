@@ -385,6 +385,13 @@ function initThumbGesture(item, pos) {
   let timer = null, armed = false, dragging = false, pointerId = null, startX = 0, startY = 0, isMouse = false;
   let dragPositions = null, dragIsCopy = false;
   item.addEventListener('pointerdown', e => {
+    // 별 아이콘(.thumb-fav-btn) 위에서 시작된 포인터는 이 드래그 제스처를 절대
+    // 무장하지 않는다 — 특히 마우스는 이동 거리 판정 없이 pointerdown 즉시
+    // item.setPointerCapture()를 거는데(아래 참고), 그 캡처가 걸리면 이후 click이
+    // 원래 눌렀던 자식 버튼이 아니라 캡처한 item으로 재타깃되어 별 버튼의 onclick이
+    // 아예 실행되지 못한다 — 그래서 별 버튼 클릭은 여기서 아예 관여하지 않고
+    // 브라우저 기본 클릭 처리에 완전히 맡긴다.
+    if (e.target.closest('.thumb-fav-btn')) return;
     if (e.pointerType !== 'touch' && e.pointerType !== 'pen' && e.pointerType !== 'mouse') return;
     if (e.pointerType === 'mouse' && e.button !== 0) return; // 오른쪽 버튼은 oncontextmenu가 이미 처리
     isMouse = e.pointerType === 'mouse';
@@ -1699,7 +1706,15 @@ function handleStructureChanged(e) {
   setTimeout(() => {
     document.querySelectorAll('.pen-toolbar .pt-tool').forEach(b => { b.disabled = Engine.Events.isLocked(); });
     if (scope === 'pageOrder' && e.detail.locked) {
-      if (totalPages) totalPg = totalPages;
+      if (totalPages) {
+        totalPg = totalPages;
+        // curPage가 0인 채로 남아있을 수 있는 유일한 경우 — 책을 열었을 때 로컬
+        // 캐시가 없어서 0페이지로 그렸다가(openWorkspaceBook 참고), 뒤늦게 서버
+        // 동기화(PageOrder.syncFromServer)가 실제 페이지 목록을 가져와 이 신호를
+        // 낸 상황. 다른 모든 pageOrder 신호(삽입/삭제/이동/복사)는 호출부가 이미
+        // curPage를 유효한 값으로 맞춰둔 뒤에 신호를 내므로 이 분기를 타지 않는다.
+        if (!curPage && totalPg > 0) curPage = 1;
+      }
       if (pageRebuild === 'full') {
         buildThumbs(); renderPages(); updatePageInfo();
         // 드래그 재정렬 토스트는 실제 재렌더링이 끝난 이 지점에서만 띄운다 —

@@ -556,7 +556,12 @@
         if (!isConsistent(j.order, pdfNumPages != null ? pdfNumPages : order.filter(e => e.kind === 'pdf').length)) return { changed: false };
         order = j.order; savedAt = j.savedAt;
         Storage.savePageOrder(bookId, order, { savedAt, skipServerPush: true });
-        Elements.invalidateCaches();
+        // init()이 이 함수를 기다리지 않고 곧장 그 시점의(로컬 캐시 없으면 0장일 수
+        // 있는) order로 화면을 그려버리므로, 여기서 서버 데이터로 order가 실제로
+        // 바뀌면 반드시 구조 변경 신호를 내야 한다 — 안 그러면 로컬 캐시가 없던
+        // 첫 진입에서 "페이지 없음" 화면이 뜬 채로 영영 갱신되지 않는다(뷰어를
+        // 나갔다 다시 들어가야만, 그때는 로컬에 저장된 값을 즉시 읽어서 정상 표시).
+        notifyStructureChanged();
         return { changed: true, order: order.slice(), totalPages: order.length };
       } else if (savedAt > j.savedAt) {
         Storage.savePageOrder(bookId, order, { savedAt });
