@@ -467,37 +467,62 @@ async function confirmPageInsert() {
 // 바꿔치기"하는 방식은 페이지 순서 데이터에는 아직 없어서, 대신 "오프라인일 땐 사진
 // 페이지를 추가할 수 없다"는 더 단순한 제약을 택했다 — OPERATIONS.md에 알려진
 // 한계로 문서화되어 있다.
+//
+// 여러 장을 한 번에 고르면(input.multiple) 한 장당 페이지 하나씩 선택한 순서 그대로
+// 만든다. insertPages(afterPos, count, template, refSize, extra)는 extra 하나를
+// count번 복제해 넣는 구조라 사진마다 다른 photoUrl/naturalWidth/naturalHeight를
+// 한 번의 호출로는 넣을 수 없다 — 그래서 insertPages()를 고치는 대신 사진마다
+// count=1로 순서대로 반복 호출하고, 매번 돌아오는 result.firstPos를 다음 호출의
+// afterPos로 이어 붙인다("직전에 방금 넣은 페이지 바로 뒤"가 계속 이어짐). 방향은
+// 맨 처음 한 번만 고른 값을 전부에 그대로 적용한다.
 async function confirmPhotoPageInsert() {
   if (!(await Engine.Storage.ping())) { showToast('📴 오프라인 상태에서는 사진 페이지를 추가할 수 없어요'); return; }
   // 파일 선택 대화상자가 뜬 동안 모달은 이미 닫히므로, 방향은 지금(확인 누른 시점)
   // 값을 미리 붙잡아둔다 — 콜백 시점에 전역 piSelectedOrientation을 다시 읽으면
   // 그 사이 다른 페이지 삽입 모달이 열려 값이 바뀌었을 가능성을 배제할 수 없다.
   const orientation = piSelectedOrientation;
-  const input = document.createElement('input'); input.type = 'file'; input.accept = 'image/*';
+  const input = document.createElement('input'); input.type = 'file'; input.accept = 'image/*'; input.multiple = true;
   input.onchange = async () => {
-    const file = input.files && input.files[0]; if (!file) return;
+    let files = input.files ? Array.from(input.files) : [];
+    if (!files.length) return;
     const ctx = pageInsertCtx;
     closePageInsertModal();
     if (!ctx) return;
-    showToast('📷 사진을 준비하는 중...');
-    try {
-      const { dataUrl, width, height } = await compressPhotoForPage(file);
-      const localPageId = 'ins_' + Date.now() + Math.random().toString(36).slice(2, 8);
-      const path = await Engine.Storage.uploadAsset(bookId, localPageId, 'image', dataUrl, 'photo.jpg', { dest: 'workspace-page', bookId, localPageId });
-      if (!path) { showToast('사진 업로드에 실패했어요 — 다시 시도해주세요'); return; }
-      // 페이지의 "논리적 크기"(entry.width/height — 캔버스·잉크 좌표 공간, 화면에
-      // 실제로 그려질 크기)는 업로드된 사진 파일의 실제 픽셀 수와 무관하게 항상
-      // 표준 크기(모달에서 고른 방향의 PAGE_SIZE_PORTRAIT/LANDSCAPE)로 고정한다(다른
-      // 템플릿 페이지와 완전히 동일한 캔버스 크기, 방향만 다를 수 있음). 사진의 원본
-      // 비율은 naturalWidth/naturalHeight로 따로 저장해두고, 실제 렌더링
-      // (buildPagePhotoNode)에서 이 캔버스 안에 비율을 유지한 채 contain 방식으로
-      // 맞춰 그린다 — 남는 여백은 흰색. 실제 이미지 파일은 원본 해상도 그대로
-      // 남아있으므로 확대해서 봐도 화질 저하는 없다.
-      const result = Engine.PageOrder.insertPages(ctx.afterPos, 1, 'photo', pageSizeForOrientation(orientation), { id: localPageId, photoUrl: path, rotationDegrees: 0, naturalWidth: width, naturalHeight: height });
-      totalPg = result.totalPages || totalPg;
-      if (result.firstPos) curPage = Math.max(1, Math.min(totalPg, result.firstPos));
-      showToast('📷 사진 페이지를 추가했어요');
-    } catch (e) { console.warn('[viewer] 사진 페이지 추가 실패', e); showToast('사진 페이지를 추가하지 못했어요'); }
+    // 업로드부터 해버리면 나중에 한도 초과로 페이지를 못 만들 때 그 업로드가 낭비된다
+    // — 시작 전에 남는 자리를 확인해서 넘는 만큼은 아예 시도하지 않는다.
+    const remaining = Engine.PageOrder.MAX_INSERTED_PAGES - Engine.PageOrder.countInsertedPages();
+    if (files.length > remaining) {
+      showToast(remaining > 0
+        ? ('⚠️ 삽입 가능한 페이지는 최대 ' + Engine.PageOrder.MAX_INSERTED_PAGES + '장까지라 ' + remaining + '장만 추가해요')
+        : ('삽입 가능한 페이지는 최대 ' + Engine.PageOrder.MAX_INSERTED_PAGES + '장까지예요'));
+      files = files.slice(0, Math.max(0, remaining));
+      if (!files.length) return;
+    }
+    let afterPos = ctx.afterPos, firstPos = null, addedCount = 0;
+    for (let i = 0; i < files.length; i++) {
+      const progress = files.length > 1 ? (' (' + (i + 1) + '/' + files.length + ')') : '';
+      showToast('📷 사진을 준비하는 중...' + progress);
+      try {
+        const { dataUrl, width, height } = await compressPhotoForPage(files[i]);
+        const localPageId = 'ins_' + Date.now() + Math.random().toString(36).slice(2, 8);
+        const path = await Engine.Storage.uploadAsset(bookId, localPageId, 'image', dataUrl, 'photo.jpg', { dest: 'workspace-page', bookId, localPageId });
+        if (!path) { showToast('사진 업로드에 실패했어요' + progress + ' — 건너뛰어요'); continue; }
+        // 페이지의 "논리적 크기"(entry.width/height — 캔버스·잉크 좌표 공간, 화면에
+        // 실제로 그려질 크기)는 업로드된 사진 파일의 실제 픽셀 수와 무관하게 항상
+        // 표준 크기(모달에서 고른 방향의 PAGE_SIZE_PORTRAIT/LANDSCAPE)로 고정한다(다른
+        // 템플릿 페이지와 완전히 동일한 캔버스 크기, 방향만 다를 수 있음). 사진의 원본
+        // 비율은 naturalWidth/naturalHeight로 따로 저장해두고, 실제 렌더링
+        // (buildPagePhotoNode)에서 이 캔버스 안에 비율을 유지한 채 contain 방식으로
+        // 맞춰 그린다 — 남는 여백은 흰색. 실제 이미지 파일은 원본 해상도 그대로
+        // 남아있으므로 확대해서 봐도 화질 저하는 없다.
+        const result = Engine.PageOrder.insertPages(afterPos, 1, 'photo', pageSizeForOrientation(orientation), { id: localPageId, photoUrl: path, rotationDegrees: 0, naturalWidth: width, naturalHeight: height });
+        totalPg = result.totalPages || totalPg;
+        if (result.firstPos) { if (firstPos === null) firstPos = result.firstPos; afterPos = result.firstPos; }
+        addedCount++;
+      } catch (e) { console.warn('[viewer] 사진 페이지 추가 실패', e); showToast('사진 페이지를 추가하지 못했어요' + progress); }
+    }
+    if (firstPos) curPage = Math.max(1, Math.min(totalPg, firstPos));
+    if (addedCount > 0) showToast(addedCount > 1 ? ('📷 사진 페이지 ' + addedCount + '장을 추가했어요') : '📷 사진 페이지를 추가했어요');
   };
   input.click();
 }
