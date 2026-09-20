@@ -942,7 +942,8 @@ async function renderOnePage(container, pos, scale) {
     onImageTap: (p, layerId, el) => openImageElementModal(p, layerId, el),
     onMediaTap: (p, layerId, el, readonly) => openMediaElementModal(p, layerId, el.x, el.y, el, readonly),
     onLockedInput: () => showToast('페이지 구성을 갱신하는 중이에요 — 잠시 후 다시 시도해주세요'),
-    onShapeHint: handleShapeHint
+    onShapeHint: handleShapeHint,
+    selectionDeleteTitle: '선택한 항목 삭제' // 필기·도형이 섞여 선택되므로 "필기" 대신 "항목" (과목/자료실 뷰어는 이 옵션을 안 넘겨 예전 문구 그대로)
   });
   if (isInserted && entry.label) {
     const labelBar = document.createElement('div');
@@ -2148,7 +2149,7 @@ function handleStructureChanged(e) {
     // 블록 선택 삭제(플로팅 툴바 🗑 버튼 / Delete·Backspace 키 공통 경로)의 유일한
     // 피드백 지점 — 신호가 두 번(locked:true→false) 오므로 첫 번째에서만 띄운다.
     if (scope === 'layers' && reason === 'groupDelete' && e.detail.locked) {
-      showToast('선택한 필기 ' + count + '개를 삭제했어요');
+      showToast('선택한 항목 ' + count + '개를 삭제했어요');
     }
     if (document.getElementById('layer-panel').classList.contains('open')) renderLayerPanel();
   }, 0);

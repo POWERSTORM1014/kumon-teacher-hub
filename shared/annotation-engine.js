@@ -1165,10 +1165,33 @@
       });
       return best;
     }
-    // 사각 영역(마퀴)과 경계 상자가 겹치는 잉크/형광펜 획 id 목록 — 블록 선택.
+    // 숨긴 레이어의 도형은 화면에 안 보이므로 선택 도구가 잡지 않는다(잉크의 기존 동작은 그대로 둔다).
+    function isLayerVisible(pos, layerId) {
+      const layer = getLayerList(pos).find(l => l.id === layerId);
+      return !(layer && layer.visible === false);
+    }
+    // 클릭 지점 근처의 도형 하나 — "외곽선 근처"만 잡는다(사각형/원의 안쪽은 아님).
+    // baseTol은 굵기를 뺀 허용 거리(페이지 px). 선 굵기의 절반이 더해진다. 가장 가까운 것, 같으면 위에 그려진(배열 뒤쪽) 것.
+    function findShapeNear(pos, layerId, x, y, baseTol) {
+      if (!isLayerVisible(pos, layerId)) return null;
+      let best = null, bestDist = Infinity;
+      getElements(pos, layerId).forEach(el => {
+        if (el.type !== 'shape' || !Ink.isValidShape(el)) return;
+        const d = Ink.shapeOutlineDistance(el, x, y);
+        if (d <= baseTol + el.width / 2 && d <= bestDist) { bestDist = d; best = el; }
+      });
+      return best;
+    }
+    // 사각 영역(마퀴) 블록 선택 — 잉크/형광펜은 경계 상자가 겹치면(기존 규칙), 도형은 완전히 포함되거나 외곽선과 교차할 때만.
     function findStrokesInRect(pos, layerId, rect) {
       const ids = [];
+      let shapesVisible = null;
       getElements(pos, layerId).forEach(el => {
+        if (el.type === 'shape') {
+          if (shapesVisible === null) shapesVisible = isLayerVisible(pos, layerId);
+          if (shapesVisible && Ink.isValidShape(el) && Ink.shapeHitsRect(el, rect)) ids.push(el.id);
+          return;
+        }
         if (el.type !== 'ink') return;
         const b = Ink.computeBounds([el]);
         if (b && Ink.rectsIntersect(b, rect)) ids.push(el.id);
@@ -1264,7 +1287,7 @@
     return {
       setBook, invalidateCaches, resetHistory, record, persist,
       getLayerList, getActiveLayerId, setActiveLayer, addLayer, renameLayer, toggleLayerVisible, deleteLayer, clearPage,
-      getElements, getAllElements, addElement, deleteElement, updateElement, findStrokeNear,
+      getElements, getAllElements, addElement, deleteElement, updateElement, findStrokeNear, findShapeNear, isLayerVisible,
       findStrokesInRect, moveElements, deleteElements,
       undo, redo, genElementId
     };
@@ -1416,8 +1439,82 @@
     }
     function isInkElement(s) { return !s.type || s.type === 'ink'; }
 
+    // ── 도형 선택용 기하(선택 도구가 쓴다) — 좌표는 모두 배율 1 페이지 좌표 ──
+    const ELLIPSE_SEGS = 64; // 원 외곽선을 64각형으로 근사한다(반지름 오차 약 0.1%)
+    function shapeBox(el) { return { minX: Math.min(el.x1, el.x2), minY: Math.min(el.y1, el.y2), maxX: Math.max(el.x1, el.x2), maxY: Math.max(el.y1, el.y2) }; }
+    // 선 굵기의 절반까지 포함한, 화면에 실제로 보이는 범위
+    function shapeVisibleBounds(el) {
+      const b = shapeBox(el), h = el.width / 2;
+      return { minX: b.minX - h, minY: b.minY - h, maxX: b.maxX + h, maxY: b.maxY + h };
+    }
+    // 외곽선을 선분 목록 [x1,y1,x2,y2]로 — 직선 1개, 사각형 4개, 원은 내접 다각형
+    function shapeSegments(el) {
+      if (el.kind === 'line') return [[el.x1, el.y1, el.x2, el.y2]];
+      const b = shapeBox(el), rx = (b.maxX - b.minX) / 2, ry = (b.maxY - b.minY) / 2;
+      if (el.kind === 'rect' || rx === 0 || ry === 0) {
+        return [[b.minX, b.minY, b.maxX, b.minY], [b.maxX, b.minY, b.maxX, b.maxY], [b.maxX, b.maxY, b.minX, b.maxY], [b.minX, b.maxY, b.minX, b.minY]];
+      }
+      const cx = (b.minX + b.maxX) / 2, cy = (b.minY + b.maxY) / 2, segs = [];
+      let px = cx + rx, py = cy;
+      for (let i = 1; i <= ELLIPSE_SEGS; i++) {
+        const a = (i / ELLIPSE_SEGS) * Math.PI * 2, nx = cx + rx * Math.cos(a), ny = cy + ry * Math.sin(a);
+        segs.push([px, py, nx, ny]); px = nx; py = ny;
+      }
+      return segs;
+    }
+    function pointSegDistance(px, py, x1, y1, x2, y2) {
+      const dx = x2 - x1, dy = y2 - y1, len2 = dx * dx + dy * dy;
+      let t = len2 ? ((px - x1) * dx + (py - y1) * dy) / len2 : 0;
+      t = t < 0 ? 0 : (t > 1 ? 1 : t);
+      return Math.hypot(px - (x1 + t * dx), py - (y1 + t * dy));
+    }
+    // 점에서 도형 "외곽선"까지의 거리 — 사각형/원의 안쪽은 외곽선에서 멀면 멀다(안쪽 클릭은 선택이 아님).
+    function shapeOutlineDistance(el, x, y) {
+      let min = Infinity;
+      shapeSegments(el).forEach(s => { const d = pointSegDistance(x, y, s[0], s[1], s[2], s[3]); if (d < min) min = d; });
+      return min;
+    }
+    // 선분이 사각형과 만나는지(Liang–Barsky) — 끝점이 안에 있어도 참
+    function segHitsRect(x1, y1, x2, y2, r) {
+      let t0 = 0, t1 = 1;
+      const dx = x2 - x1, dy = y2 - y1, p = [-dx, dx, -dy, dy], q = [x1 - r.minX, r.maxX - x1, y1 - r.minY, r.maxY - y1];
+      for (let i = 0; i < 4; i++) {
+        if (p[i] === 0) { if (q[i] < 0) return false; continue; }
+        const t = q[i] / p[i];
+        if (p[i] < 0) { if (t > t1) return false; if (t > t0) t0 = t; }
+        else { if (t < t0) return false; if (t < t1) t1 = t; }
+      }
+      return true;
+    }
+    // 마퀴 규칙(Q4): 보이는 범위가 마퀴 안에 완전히 들어가거나, 외곽선이 마퀴와 교차(선 굵기/2 허용)하면 선택.
+    // 경계 상자만 겹치는 경우(큰 틀 안쪽의 글씨만 감싸는 마퀴 등)는 선택하지 않는다.
+    function shapeHitsRect(el, rect) {
+      const v = shapeVisibleBounds(el);
+      if (v.minX >= rect.minX && v.maxX <= rect.maxX && v.minY >= rect.minY && v.maxY <= rect.maxY) return true;
+      const h = el.width / 2, grown = { minX: rect.minX - h, minY: rect.minY - h, maxX: rect.maxX + h, maxY: rect.maxY + h };
+      return shapeSegments(el).some(s => segHitsRect(s[0], s[1], s[2], s[3], grown));
+    }
+    // 크기 조절 핸들 위치 — 직선은 양 끝점 p1/p2, 사각형·원은 경계 상자의 모서리 nw/ne/sw/se
+    function shapeHandles(el) {
+      if (el.kind === 'line') return [{ id: 'p1', x: el.x1, y: el.y1 }, { id: 'p2', x: el.x2, y: el.y2 }];
+      const b = shapeBox(el);
+      return [{ id: 'nw', x: b.minX, y: b.minY }, { id: 'ne', x: b.maxX, y: b.minY }, { id: 'sw', x: b.minX, y: b.maxY }, { id: 'se', x: b.maxX, y: b.maxY }];
+    }
+    // 핸들을 (px,py)로 끌었을 때의 새 좌표 — 사각형·원은 반대편 모서리를 고정하고 x1≤x2, y1≤y2로 정규화한다
+    // (반대편을 넘기면 자연스럽게 뒤집힌다). 직선은 끝점 순서를 유지한다.
+    function resizeShape(el, handleId, px, py) {
+      if (el.kind === 'line') return handleId === 'p1' ? { x1: px, y1: py, x2: el.x2, y2: el.y2 } : { x1: el.x1, y1: el.y1, x2: px, y2: py };
+      const b = shapeBox(el);
+      const fx = (handleId === 'nw' || handleId === 'sw') ? b.maxX : b.minX;
+      const fy = (handleId === 'nw' || handleId === 'ne') ? b.maxY : b.minY;
+      return { x1: Math.min(fx, px), y1: Math.min(fy, py), x2: Math.max(fx, px), y2: Math.max(fy, py) };
+    }
+
     // 레이어별로 오프스크린에 그린 뒤 합성 — 지우개가 다른 레이어를 침범하지 않게 함.
+    // excludeId: 잉크 하나의 id(예전 방식), 또는 id Set — Set이면 그 id의 도형도 그리지 않는다(도형을 끄는 동안 원본을 숨길 때).
     function renderLayersToCanvas(ctx, layers, strokesByLayer, scale, w, h, excludeId) {
+      const notExcluded = (excludeId && typeof excludeId.has === 'function') ? (s => !excludeId.has(s.id)) : (s => s.id !== excludeId);
+      const shapeHidden = (excludeId && typeof excludeId.has === 'function') ? (s => excludeId.has(s.id)) : (() => false);
       ctx.clearRect(0, 0, w, h);
       // 도형은 모든 레이어의 잉크보다 먼저, 즉 모든 필기 아래에 이 ctx에 직접 그린다. 지우개(destination-out)는
       // 아래에서 레이어마다 만드는 오프스크린 안에서만 동작하므로, 여기 그려진 도형은 지워지지 않는다.
@@ -1425,7 +1522,7 @@
         if (layer.visible === false) return;
         const shapes = strokesByLayer[layer.id];
         if (!shapes || !shapes.length) return;
-        shapes.forEach(s => { if (s.type === 'shape') paintShape(ctx, s, scale); });
+        shapes.forEach(s => { if (s.type === 'shape' && !shapeHidden(s)) paintShape(ctx, s, scale); });
       });
       layers.forEach(layer => {
         if (layer.visible === false) return;
@@ -1433,11 +1530,11 @@
         if (!elements || !elements.length) return;
         // 잉크가 하나도 없는 레이어(도형/텍스트/이미지만 있는 레이어)는 전체 크기 오프스크린을 만들지 않는다 —
         // 그려질 것이 없어서 결과는 같고, 400%에서는 캔버스 한 장이 약 243MiB라 매번 낭비였다.
-        if (!elements.some(s => isInkElement(s) && s.id !== excludeId)) return;
+        if (!elements.some(s => isInkElement(s) && notExcluded(s))) return;
         const off = document.createElement('canvas');
         off.width = w; off.height = h;
         const octx = off.getContext('2d');
-        elements.forEach(s => { if ((!s.type || s.type === 'ink') && s.id !== excludeId) paintStroke(octx, s, scale); });
+        elements.forEach(s => { if ((!s.type || s.type === 'ink') && notExcluded(s)) paintStroke(octx, s, scale); });
         ctx.drawImage(off, 0, 0);
       });
     }
@@ -1474,7 +1571,10 @@
     function rectsIntersect(a, b) {
       return a.minX <= b.maxX && a.maxX >= b.minX && a.minY <= b.maxY && a.maxY >= b.minY;
     }
-    return { applyStrokeStyle, strokeSmoothPath, paintStroke, paintShape, isValidShape, SHAPE_KINDS, renderLayersToCanvas, addPointsFromEvent, getPagePos, computeBounds, rectsIntersect };
+    return {
+      applyStrokeStyle, strokeSmoothPath, paintStroke, paintShape, isValidShape, SHAPE_KINDS, renderLayersToCanvas, addPointsFromEvent, getPagePos, computeBounds, rectsIntersect,
+      shapeBox, shapeVisibleBounds, shapeOutlineDistance, shapeHitsRect, shapeHandles, resizeShape
+    };
   })();
 
   /* ══════════════════════════════════════════════════════════
@@ -1516,7 +1616,15 @@
     // marquee, 선택된 획들을 함께 옮기는 중이면 groupDrag에 상태가 담긴다.
     let groupSel = null;  // {pos, layerId, ids:Set<string>}
     let marquee = null;   // {pos, layerId, startX, startY, curX, curY, pointerId}
-    let groupDrag = null; // {pos, layerId, ids, origPtsById:Map, startX, startY, pointerId, moved, dx, dy}
+    let groupDrag = null; // {pos, layerId, ids, origPtsById:Map, origShapesById:Map, startX, startY, pointerId, moved, dx, dy, shapesHidden}
+    // 도형 크기 조절 — 도형 1개가 선택됐을 때 모서리/끝점 핸들을 끄는 중이면 상태가 담긴다.
+    // {pos, layerId, id, kind, handle, pointerId, orig:{x1,y1,x2,y2}, cur:{...}, offX, offY, startSX, startSY, moved}
+    let handleDrag = null;
+    // 핸들 크기(화면 px, 확대 배율과 무관) — 보이는 지름 14px + 흰 테두리 2px. 잡는 영역은 펜·마우스 반지름 12px(지름 24),
+    // 손가락 반지름 22px(지름 44). 클릭으로 도형을 고를 때의 허용 거리(굵기 제외)도 같은 값이다.
+    const HANDLE_R = 7, HANDLE_RING = 2, HANDLE_EDGE = HANDLE_R + HANDLE_RING;
+    const HIT_PEN = 12, HIT_FINGER = 22;
+    function hitBase(e) { return e && e.pointerType === 'touch' ? HIT_FINGER : HIT_PEN; }
 
     function templateBackground(ctx, w, h, template) {
       ctx.save();
@@ -1633,13 +1741,66 @@
       drawSelectionOverlay(pos);
     }
 
+    // 선택된 요소를 잉크와 (유효한) 도형으로 나눈다 — 잉크 쪽 조건은 예전 selectionBounds의 필터와 같다.
+    function selectedParts(pos, layerId, ids) {
+      const ink = [], shapes = [];
+      Elements.getElements(pos, layerId).forEach(el => {
+        if (!ids.has(el.id)) return;
+        if (el.type === 'ink') ink.push(el);
+        else if (el.type === 'shape' && Ink.isValidShape(el)) shapes.push(el);
+      });
+      return { ink, shapes };
+    }
+    // 선택 전체를 감싸는 상자(점선 표시용) — 잉크만 선택했으면 예전과 똑같은 값이다.
     function selectionBounds(pos, layerId, ids) {
-      const strokes = Elements.getElements(pos, layerId).filter(el => el.type === 'ink' && ids.has(el.id));
-      return Ink.computeBounds(strokes);
+      const parts = selectedParts(pos, layerId, ids);
+      let b = Ink.computeBounds(parts.ink);
+      parts.shapes.forEach(el => {
+        const v = Ink.shapeVisibleBounds(el);
+        b = b ? { minX: Math.min(b.minX, v.minX), minY: Math.min(b.minY, v.minY), maxX: Math.max(b.maxX, v.maxX), maxY: Math.max(b.maxY, v.maxY) } : v;
+      });
+      return b;
     }
     function pointInBounds(b, x, y, margin) {
       if (!b) return false;
       return x >= b.minX - margin && x <= b.maxX + margin && y >= b.minY - margin && y <= b.maxY + margin;
+    }
+    // "이미 선택된 영역을 눌렀는가" — 잉크는 기존처럼 경계 상자(+8px), 선택된 도형은 외곽선 근처일 때만.
+    // (선택된 큰 사각형의 안쪽을 눌러 그 안의 글씨를 새로 고를 수 있어야 하므로 도형은 상자 전체로 보지 않는다.)
+    function selectionHit(pos, layerId, ids, p, scale, e) {
+      const parts = selectedParts(pos, layerId, ids);
+      if (pointInBounds(Ink.computeBounds(parts.ink), p.x, p.y, 8)) return true;
+      if (!parts.shapes.length || !Elements.isLayerVisible(pos, layerId)) return false;
+      const base = hitBase(e) / scale;
+      return parts.shapes.some(el => Ink.shapeOutlineDistance(el, p.x, p.y) <= base + el.width / 2);
+    }
+    // 핸들이 붙는 도형 — 선택이 "보이는 활성 레이어의 유효한 도형 1개"일 때만(잉크가 섞이면 핸들 없음).
+    function handleTargetShape(pos) {
+      if (!groupSel || groupSel.pos !== pos || groupSel.ids.size !== 1) return null;
+      const id = groupSel.ids.values().next().value;
+      const el = Elements.getElements(pos, groupSel.layerId).find(x => x.id === id);
+      if (!el || el.type !== 'shape' || !Ink.isValidShape(el)) return null;
+      if (groupSel.layerId !== Elements.getActiveLayerId(pos) || !Elements.isLayerVisible(pos, groupSel.layerId)) return null;
+      return el;
+    }
+    // 핸들의 화면 좌표 — 페이지 가장자리에 붙은 도형은 핸들이 화면 밖으로 나가므로, 핸들 전체가 보이도록 캔버스 안쪽으로
+    // 최대 HANDLE_EDGE(9px)까지 당겨 그린다. 잡는 위치도 그려진 위치와 같다(그래서 항상 보이고 항상 잡을 수 있다).
+    function shapeHandlePoints(el, scale, cw, ch) {
+      return Ink.shapeHandles(el).map(h => ({ id: h.id, sx: clamp(h.x * scale, HANDLE_EDGE, cw - HANDLE_EDGE), sy: clamp(h.y * scale, HANDLE_EDGE, ch - HANDLE_EDGE) }));
+    }
+    function paintHandles(ctx, pts) {
+      ctx.save();
+      pts.forEach(h => {
+        ctx.beginPath(); ctx.arc(h.sx, h.sy, HANDLE_R + HANDLE_RING, 0, Math.PI * 2); ctx.fillStyle = '#ffffff'; ctx.fill();
+        ctx.beginPath(); ctx.arc(h.sx, h.sy, HANDLE_R, 0, Math.PI * 2); ctx.fillStyle = '#e8401c'; ctx.fill();
+      });
+      ctx.restore();
+    }
+    // 가장 가까운 핸들(반지름 안) — 작은 도형에서 핸들이 겹쳐도 하나만 잡힌다
+    function hitHandle(pts, sx, sy, radius) {
+      let best = null, bestDist = Infinity;
+      pts.forEach(h => { const d = Math.hypot(sx - h.sx, sy - h.sy); if (d <= radius && d < bestDist) { bestDist = d; best = h; } });
+      return best;
     }
     // 확정된 블록 선택을 점선 사각형으로 표시한다 — 그리는 중이 아닐 때도 ink-live
     // 캔버스에 계속 남아있어야 하므로 redrawPage() 끝에서 매번 다시 그린다.
@@ -1658,7 +1819,10 @@
       ctx.lineWidth = 1.5;
       ctx.strokeRect(b.minX * scale - 5, b.minY * scale - 5, (b.maxX - b.minX) * scale + 10, (b.maxY - b.minY) * scale + 10);
       ctx.restore();
-      showSelectionToolbar(pos, b, scale);
+      const hasShape = selectedParts(pos, groupSel.layerId, groupSel.ids).shapes.length > 0;
+      showSelectionToolbar(pos, b, scale, hasShape);
+      const hShape = hasShape ? handleTargetShape(pos) : null;
+      if (hShape) paintHandles(ctx, shapeHandlePoints(hShape, scale, liveC.width, liveC.height));
     }
     // 선택된 블록 위에 뜨는 삭제(휴지통) 버튼 — el-layer(elwrap-<pos>)가 이미 캔버스와
     // 1:1로 맞춰진 절대좌표 오버레이 컨테이너이므로, 텍스트/이미지 노드와 같은 좌표계를
@@ -1675,18 +1839,28 @@
         document.querySelectorAll('.sel-toolbar').forEach(el => el.remove());
       }
     }
-    function showSelectionToolbar(pos, b, scale) {
+    // hasShape: 선택에 도형이 들어 있으면 핸들(반지름 9px)을 가리지 않도록 버튼을 8px 더 띄우고, 위쪽 가장자리라 자리가
+    // 없으면 상자 아래에 둔다(잉크만 선택했을 때의 위치는 예전 그대로).
+    function showSelectionToolbar(pos, b, scale, hasShape) {
       removeSelectionToolbar(pos);
       const wrap = document.getElementById('elwrap-' + pos);
       if (!wrap) return;
       const toolbar = document.createElement('div');
       toolbar.className = 'sel-toolbar';
-      toolbar.style.left = (b.minX * scale - 5) + 'px';
-      toolbar.style.top = Math.max(0, b.minY * scale - 5 - 38) + 'px';
+      let left = b.minX * scale - 5, top = Math.max(0, b.minY * scale - 5 - 38);
+      if (hasShape) {
+        left = Math.max(0, left);
+        const above = b.minY * scale - 5 - 46;
+        if (above >= 0) top = above;
+        else { const c = document.getElementById('ink-' + pos); top = Math.max(0, Math.min(b.maxY * scale + 5 + 10, (c ? c.height : Infinity) - 36)); }
+      }
+      toolbar.style.left = left + 'px';
+      toolbar.style.top = top + 'px';
       const btn = document.createElement('button');
       btn.type = 'button';
       btn.className = 'sel-toolbar-btn';
-      btn.title = '선택한 필기 삭제';
+      const mo = mounted[pos] && mounted[pos].opts;
+      btn.title = (mo && mo.selectionDeleteTitle) || '선택한 필기 삭제'; // 나의 폴더만 opts로 "선택한 항목 삭제"를 넘긴다(과목/자료실은 예전 문구 그대로)
       btn.textContent = '🗑';
       btn.addEventListener('pointerdown', e => e.stopPropagation()); // 캔버스 마퀴/드래그로 이벤트가 새지 않게
       btn.addEventListener('click', () => deleteSelectedGroup());
@@ -1957,10 +2131,18 @@
           return;
         }
         if (tool === 'select') {
-          const p = Ink.getPagePos(e, canvas, mounted[pos].scale);
+          if (handleDrag) return; // 핸들을 끄는 중에 다른 포인터(손바닥 등)가 눌려도 무시
+          const sc = mounted[pos].scale;
+          const p = Ink.getPagePos(e, canvas, sc);
+          // 0) 도형 하나가 선택돼 있고 그 핸들을 눌렀으면 → 크기 조절 시작(핸들이 모든 것보다 우선)
+          const hShape = (!groupDrag && !marquee && groupSel && groupSel.layerId === layerId) ? handleTargetShape(pos) : null;
+          if (hShape) {
+            const hit = hitHandle(shapeHandlePoints(hShape, sc, canvas.width, canvas.height), p.x * sc, p.y * sc, hitBase(e));
+            if (hit) { startHandleDrag(pos, layerId, hShape, hit.id, p, e.pointerId, canvas); return; }
+          }
           // 1) 이미 선택된 영역 안을 다시 눌렀으면 → 선택된 획 전체를 함께 이동 시작
           if (groupSel && groupSel.pos === pos && groupSel.layerId === layerId && groupSel.ids.size &&
-              pointInBounds(selectionBounds(pos, layerId, groupSel.ids), p.x, p.y, 8)) {
+              selectionHit(pos, layerId, groupSel.ids, p, sc, e)) {
             startGroupDrag(pos, layerId, groupSel.ids, p, e.pointerId, canvas);
             return;
           }
@@ -1968,6 +2150,13 @@
           const stroke = Elements.findStrokeNear(pos, layerId, p.x, p.y);
           if (stroke) {
             groupSel = { pos, layerId, ids: new Set([stroke.id]) };
+            startGroupDrag(pos, layerId, groupSel.ids, p, e.pointerId, canvas);
+            return;
+          }
+          // 2-b) 잉크가 없으면 도형 외곽선 근처를 탭했는지 본다(잉크가 우선, 안쪽은 도형으로 치지 않는다)
+          const shape = Elements.findShapeNear(pos, layerId, p.x, p.y, hitBase(e) / sc);
+          if (shape) {
+            groupSel = { pos, layerId, ids: new Set([shape.id]) };
             startGroupDrag(pos, layerId, groupSel.ids, p, e.pointerId, canvas);
             return;
           }
@@ -2018,6 +2207,23 @@
         cancelShape(); // 손바닥 인식 등으로 브라우저가 취소한 입력은 도형으로 확정하지 않는다
       });
 
+      // ── 도형 크기 조절: 핸들 드래그 — 시작한 포인터(pointerId)와 시작한 페이지의 캔버스 이벤트만 처리한다.
+      // 한 번의 드래그가 updateElement 한 건(Undo 한 번)이고, pointercancel이면 원래대로 되돌리고 확정하지 않는다. ──
+      canvas.addEventListener('pointermove', e => {
+        if (!handleDrag || handleDrag.pos !== pos || e.pointerId !== handleDrag.pointerId) return;
+        if (e.buttons === 0) { moveHandle(e, canvas); finishHandleDrag(true); return; } // pointerup 유실 방어
+        moveHandle(e, canvas);
+      });
+      canvas.addEventListener('pointerup', e => {
+        if (!handleDrag || handleDrag.pos !== pos || e.pointerId !== handleDrag.pointerId) return;
+        moveHandle(e, canvas);
+        finishHandleDrag(true);
+      });
+      canvas.addEventListener('pointercancel', e => {
+        if (!handleDrag || handleDrag.pos !== pos || e.pointerId !== handleDrag.pointerId) return;
+        finishHandleDrag(false);
+      });
+
       // ── 블록 선택: 사각 영역(마퀴) 드래그 ──
       canvas.addEventListener('pointermove', e => {
         if (!marquee || e.pointerId !== marquee.pointerId) return;
@@ -2050,6 +2256,8 @@
         const dx = p.x - groupDrag.startX, dy = p.y - groupDrag.startY;
         if (!groupDrag.moved && Math.hypot(dx * scale, dy * scale) < EL_DRAG_THRESHOLD) return;
         groupDrag.moved = true; groupDrag.dx = dx; groupDrag.dy = dy;
+        // 도형이 들어 있으면 끄는 동안 원본 도형을 숨겨 잔상을 없앤다(잉크 원본은 예전처럼 그대로 둔다). 처음 한 번만 다시 그린다.
+        if (groupDrag.origShapesById.size && !groupDrag.shapesHidden) { groupDrag.shapesHidden = true; redrawInkWithout(pos, new Set(groupDrag.origShapesById.keys())); }
         const liveC = document.getElementById('ink-live-' + pos);
         if (!liveC) return;
         const lctx = liveC.getContext('2d');
@@ -2057,12 +2265,14 @@
         Elements.getElements(pos, groupDrag.layerId).forEach(s => {
           if (!groupDrag.ids.has(s.id)) return;
           const orig = groupDrag.origPtsById.get(s.id);
-          Ink.paintStroke(lctx, Object.assign({}, s, { pts: orig.map(pt => ({ x: pt.x + dx, y: pt.y + dy })) }), scale);
+          if (orig) { Ink.paintStroke(lctx, Object.assign({}, s, { pts: orig.map(pt => ({ x: pt.x + dx, y: pt.y + dy })) }), scale); return; }
+          const so = groupDrag.origShapesById.get(s.id);
+          if (so) Ink.paintShape(lctx, Object.assign({}, s, { x1: so.x1 + dx, y1: so.y1 + dy, x2: so.x2 + dx, y2: so.y2 + dy }), scale);
         });
       });
       function endGroupDrag(e) {
         if (!groupDrag || (e && e.pointerId !== groupDrag.pointerId)) return;
-        const { pos: p2, layerId: lid, origPtsById, moved, dx, dy } = groupDrag;
+        const { pos: p2, layerId: lid, origPtsById, origShapesById, moved, dx, dy } = groupDrag;
         const liveC = document.getElementById('ink-live-' + p2);
         if (liveC) liveC.getContext('2d').clearRect(0, 0, liveC.width, liveC.height);
         if (moved) {
@@ -2070,7 +2280,11 @@
           origPtsById.forEach((origPts, id) => {
             moves.push({ id, from: { pts: origPts }, to: { pts: origPts.map(pt => ({ x: pt.x + dx, y: pt.y + dy })) } });
           });
-          Elements.moveElements(p2, lid, moves); // 여러 획이어도 Undo 한 번으로 묶여서 기록됨
+          const r2 = v => Math.round(v * 100) / 100;
+          origShapesById.forEach((o, id) => {
+            moves.push({ id, from: { x1: o.x1, y1: o.y1, x2: o.x2, y2: o.y2 }, to: { x1: r2(o.x1 + dx), y1: r2(o.y1 + dy), x2: r2(o.x2 + dx), y2: r2(o.y2 + dy) } });
+          });
+          Elements.moveElements(p2, lid, moves); // 잉크와 도형이 섞여 있어도 Undo 한 번으로 묶여서 기록됨
         }
         groupDrag = null;
         redrawPage(p2); // groupSel은 유지 — 이동 후에도 계속 선택된 상태로 남아 다시 옮기거나 삭제할 수 있다
@@ -2082,9 +2296,55 @@
     function startGroupDrag(pos, layerId, ids, p, pointerId, canvas) {
       const strokes = Elements.getElements(pos, layerId).filter(el => el.type === 'ink' && ids.has(el.id));
       const origPtsById = new Map(strokes.map(s => [s.id, s.pts.map(pt => ({ x: pt.x, y: pt.y }))]));
-      groupDrag = { pos, layerId, ids: new Set(ids), origPtsById, startX: p.x, startY: p.y, pointerId, moved: false, dx: 0, dy: 0 };
+      const origShapesById = new Map(selectedParts(pos, layerId, ids).shapes.map(s => [s.id, { x1: s.x1, y1: s.y1, x2: s.x2, y2: s.y2 }]));
+      groupDrag = { pos, layerId, ids: new Set(ids), origPtsById, origShapesById, startX: p.x, startY: p.y, pointerId, moved: false, dx: 0, dy: 0, shapesHidden: false };
       canvas.setPointerCapture(pointerId);
       removeSelectionToolbar(pos); // 드래그 중엔 위치가 안 맞으니 숨기고, endGroupDrag의 redrawPage가 다시 띄운다
+    }
+    // 잉크 캔버스를 hideIds(Set)의 도형만 뺀 채 다시 그린다 — 끄는 동안 원본이 남는 잔상을 없앨 때만 쓴다(선택/툴바는 건드리지 않음).
+    function redrawInkWithout(pos, hideIds) {
+      const m = mounted[pos], canvas = document.getElementById('ink-' + pos);
+      if (!m || !canvas) return;
+      Ink.renderLayersToCanvas(canvas.getContext('2d'), Elements.getLayerList(pos), Elements.getAllElements(pos), m.scale, canvas.width, canvas.height, hideIds);
+    }
+    function startHandleDrag(pos, layerId, el, handleId, p, pointerId, canvas) {
+      const sc = mounted[pos].scale;
+      const hp = Ink.shapeHandles(el).find(h => h.id === handleId);
+      const orig = { x1: el.x1, y1: el.y1, x2: el.x2, y2: el.y2 };
+      // 핸들 중심과 눌린 위치의 어긋남(offX/Y)을 저장해서, 잡는 순간 모서리가 포인터 쪽으로 튀지 않게 한다.
+      handleDrag = { pos, layerId, id: el.id, kind: el.kind, handle: handleId, pointerId, orig, cur: Object.assign({}, orig),
+        offX: hp.x - p.x, offY: hp.y - p.y, startSX: p.x * sc, startSY: p.y * sc, moved: false };
+      canvas.setPointerCapture(pointerId);
+      removeSelectionToolbar(pos); // 끄는 동안엔 위치가 안 맞으니 숨긴다(끝나면 redrawPage가 다시 띄운다)
+    }
+    // 포인터 위치로 새 좌표를 계산한다. 이동 문턱(EL_DRAG_THRESHOLD)을 넘기 전에는 아무것도 바꾸지 않아서 탭만 해서는 기록이 안 생긴다.
+    // 최소 크기(shapeBigEnough)에 못 미치면 직전의 유효한 모양을 유지한다.
+    function moveHandle(e, canvas) {
+      const h = handleDrag, m = mounted[h.pos];
+      if (!m) return;
+      const p = Ink.getPagePos(e, canvas, m.scale);
+      if (!h.moved) {
+        if (Math.hypot(p.x * m.scale - h.startSX, p.y * m.scale - h.startSY) < EL_DRAG_THRESHOLD) return;
+        h.moved = true;
+        redrawInkWithout(h.pos, new Set([h.id])); // 끄는 동안 원본 도형을 숨긴다
+      }
+      const next = Ink.resizeShape({ kind: h.kind, x1: h.orig.x1, y1: h.orig.y1, x2: h.orig.x2, y2: h.orig.y2 }, h.handle, p.x + h.offX, p.y + h.offY);
+      if (shapeBigEnough(h.kind, next.x1, next.y1, next.x2, next.y2)) h.cur = next;
+      scheduleInkFrame();
+    }
+    // commit=true면 바뀐 게 있을 때만 updateElement 한 건으로 확정한다. 어느 쪽이든 redrawPage가 원본 숨김을 풀고 선택/핸들을 다시 그린다.
+    function finishHandleDrag(commit) {
+      const h = handleDrag; handleDrag = null;
+      if (!h) return;
+      if (inkRAF !== null) { cancelAnimationFrame(inkRAF); inkRAF = null; }
+      if (commit && h.moved && mounted[h.pos]) {
+        const r2 = v => Math.round(v * 100) / 100;
+        const to = { x1: r2(h.cur.x1), y1: r2(h.cur.y1), x2: r2(h.cur.x2), y2: r2(h.cur.y2) };
+        if (to.x1 !== h.orig.x1 || to.y1 !== h.orig.y1 || to.x2 !== h.orig.x2 || to.y2 !== h.orig.y2) {
+          Elements.updateElement(h.pos, h.layerId, h.id, h.orig, to);
+        }
+      }
+      if (mounted[h.pos]) redrawPage(h.pos);
     }
     function drawMarqueeOverlay(pos) {
       const liveC = document.getElementById('ink-live-' + pos);
@@ -2106,6 +2366,16 @@
     function scheduleInkFrame() { if (inkRAF !== null) return; inkRAF = requestAnimationFrame(flushInkFrame); }
     function flushInkFrame() {
       inkRAF = null;
+      if (handleDrag) { // 크기 조절 미리보기 — 바뀐 모양과 핸들을 ink-live에 매 프레임 다시 그린다
+        const hm = mounted[handleDrag.pos], liveC = document.getElementById('ink-live-' + handleDrag.pos);
+        const hel = hm && Elements.getElements(handleDrag.pos, handleDrag.layerId).find(x => x.id === handleDrag.id);
+        if (!hm || !liveC || !hel) { finishHandleDrag(false); return; } // 끄는 도중 화면이 다시 만들어졌거나 도형이 사라졌다
+        const lctx = liveC.getContext('2d'), shp = Object.assign({}, hel, handleDrag.cur);
+        lctx.clearRect(0, 0, liveC.width, liveC.height);
+        Ink.paintShape(lctx, shp, hm.scale);
+        paintHandles(lctx, shapeHandlePoints(shp, hm.scale, liveC.width, liveC.height));
+        return;
+      }
       if (curShape) { // 도형 미리보기 — 시작점~현재점으로 ink-live를 매 프레임 다시 그린다
         const sm = mounted[curShape.pos], liveC = document.getElementById('ink-live-' + curShape.pos);
         if (!sm || !liveC) { curShape = null; return; } // 그리는 도중 화면이 다시 만들어져 캔버스가 사라졌다
@@ -2142,11 +2412,12 @@
       curStroke = null; curLayerId = null; curPos = null; curEraseShapes = null;
     }
     // 창 전환/포커스 상실 때 진행 중이던 획은 확정하지만(예전 동작), 반쯤 그려진 도형은 확정하지 않고 버린다.
-    function resetStuckDrawing() { endStroke(); cancelShape(); }
+    // 크기 조절 중이던 핸들 드래그도 확정하지 않고 원래대로 되돌린다.
+    function resetStuckDrawing() { endStroke(); cancelShape(); finishHandleDrag(false); }
     window.addEventListener('blur', resetStuckDrawing);
     document.addEventListener('visibilitychange', () => { if (document.hidden) resetStuckDrawing(); });
 
-    function unmountAll() { for (const k in mounted) delete mounted[k]; groupSel = null; marquee = null; groupDrag = null; curShape = null; }
+    function unmountAll() { for (const k in mounted) delete mounted[k]; groupSel = null; marquee = null; groupDrag = null; curShape = null; handleDrag = null; }
 
     // 마우스 휠로 이전/다음 페이지 이동. 확대 상태(scale>1)면 휠은 화면을 훑어보는
     // 용도가 우선이어야 하므로 페이지 전환을 하지 않고, 필기 모드 중에도 화면이
