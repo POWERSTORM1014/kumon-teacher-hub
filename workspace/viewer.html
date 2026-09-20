@@ -430,6 +430,23 @@ body{font-family:var(--font);background:var(--bg);color:var(--ink);height:100vh;
         </svg>
       </button>
       <button class="pt-tool" id="pt-media" onclick="setTool('media')" title="오디오/영상 핀">▶</button>
+      <button class="pt-tool" id="pt-shape" onclick="setTool('shape')" title="도형 (S펜·마우스로 그리기)">
+        <svg width="20" height="20" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">
+          <rect x="3.5" y="3.5" width="10" height="10" rx="1.2" stroke="currentColor" stroke-width="1.8"/>
+          <circle cx="15.5" cy="15.5" r="5.2" stroke="currentColor" stroke-width="1.8"/>
+        </svg>
+      </button>
+      <div class="pt-shape-kinds" id="pt-shape-kinds" style="display:none;align-items:center;gap:6px;">
+        <button class="pt-tool on" id="pt-shape-line" onclick="setShapeKind('line')" title="직선">
+          <svg width="20" height="20" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg" aria-hidden="true"><path d="M5 19L19 5" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>
+        </button>
+        <button class="pt-tool" id="pt-shape-rect" onclick="setShapeKind('rect')" title="사각형">
+          <svg width="20" height="20" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg" aria-hidden="true"><rect x="4" y="6" width="16" height="12" rx="1.2" stroke="currentColor" stroke-width="2"/></svg>
+        </button>
+        <button class="pt-tool" id="pt-shape-ellipse" onclick="setShapeKind('ellipse')" title="원">
+          <svg width="20" height="20" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg" aria-hidden="true"><ellipse cx="12" cy="12" rx="8.5" ry="6.5" stroke="currentColor" stroke-width="2"/></svg>
+        </button>
+      </div>
       <div class="pt-color-group" id="pt-color-group">
         <div class="pt-sep"></div>
         <div id="pt-colors" style="display:flex;gap:6px;"></div>

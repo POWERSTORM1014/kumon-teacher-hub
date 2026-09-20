@@ -1384,13 +1384,56 @@
       strokeSmoothPath(ctx, stroke.pts, scale);
       ctx.restore();
     }
+    // ── 도형(직선/사각형/원) ──
+    // 요소: { id, type:'shape', v:1, kind:'line'|'rect'|'ellipse', x1,y1,x2,y2, color, width } — 좌표와 굵기는
+    // 배율 1 페이지 좌표/px. 직선은 양 끝점, 사각형·원은 마주 보는 두 모서리(원은 그 상자에 내접)이고 채우기는 없다.
+    // 도형은 "틀" 역할이라 모든 필기 아래에 그려지고 지우개의 영향을 받지 않는다(renderLayersToCanvas 참고).
+    const SHAPE_KINDS = { line: true, rect: true, ellipse: true };
+    function isValidShape(el) {
+      return !!el && el.type === 'shape' && el.v === 1 && Object.prototype.hasOwnProperty.call(SHAPE_KINDS, el.kind) &&
+        Number.isFinite(el.x1) && Number.isFinite(el.y1) && Number.isFinite(el.x2) && Number.isFinite(el.y2) &&
+        Number.isFinite(el.width) && el.width > 0;
+    }
+    // compositeOp는 지우개 진행 중 미리보기에서 도형을 되살릴 때만 'destination-over'로 넘긴다.
+    function paintShape(ctx, el, scale, compositeOp) {
+      if (!isValidShape(el)) return; // 알 수 없거나 손상된 요소는 조용히 건너뛴다(지우거나 고치지 않는다)
+      ctx.save();
+      ctx.globalCompositeOperation = compositeOp || 'source-over';
+      ctx.strokeStyle = (typeof el.color === 'string' && el.color) ? el.color : '#1a1814';
+      ctx.lineWidth = el.width * scale;
+      ctx.lineCap = 'round';
+      ctx.lineJoin = el.kind === 'rect' ? 'miter' : 'round';
+      const x1 = el.x1 * scale, y1 = el.y1 * scale, x2 = el.x2 * scale, y2 = el.y2 * scale;
+      ctx.beginPath();
+      if (el.kind === 'line') { ctx.moveTo(x1, y1); ctx.lineTo(x2, y2); }
+      else if (el.kind === 'rect') { ctx.rect(Math.min(x1, x2), Math.min(y1, y2), Math.abs(x2 - x1), Math.abs(y2 - y1)); }
+      else {
+        const rx = Math.abs(x2 - x1) / 2, ry = Math.abs(y2 - y1) / 2;
+        if (rx > 0 && ry > 0) ctx.ellipse((x1 + x2) / 2, (y1 + y2) / 2, rx, ry, 0, 0, Math.PI * 2);
+      }
+      ctx.stroke();
+      ctx.restore();
+    }
+    function isInkElement(s) { return !s.type || s.type === 'ink'; }
+
     // 레이어별로 오프스크린에 그린 뒤 합성 — 지우개가 다른 레이어를 침범하지 않게 함.
     function renderLayersToCanvas(ctx, layers, strokesByLayer, scale, w, h, excludeId) {
       ctx.clearRect(0, 0, w, h);
+      // 도형은 모든 레이어의 잉크보다 먼저, 즉 모든 필기 아래에 이 ctx에 직접 그린다. 지우개(destination-out)는
+      // 아래에서 레이어마다 만드는 오프스크린 안에서만 동작하므로, 여기 그려진 도형은 지워지지 않는다.
+      layers.forEach(layer => {
+        if (layer.visible === false) return;
+        const shapes = strokesByLayer[layer.id];
+        if (!shapes || !shapes.length) return;
+        shapes.forEach(s => { if (s.type === 'shape') paintShape(ctx, s, scale); });
+      });
       layers.forEach(layer => {
         if (layer.visible === false) return;
         const elements = strokesByLayer[layer.id];
         if (!elements || !elements.length) return;
+        // 잉크가 하나도 없는 레이어(도형/텍스트/이미지만 있는 레이어)는 전체 크기 오프스크린을 만들지 않는다 —
+        // 그려질 것이 없어서 결과는 같고, 400%에서는 캔버스 한 장이 약 243MiB라 매번 낭비였다.
+        if (!elements.some(s => isInkElement(s) && s.id !== excludeId)) return;
         const off = document.createElement('canvas');
         off.width = w; off.height = h;
         const octx = off.getContext('2d');
@@ -1431,14 +1474,14 @@
     function rectsIntersect(a, b) {
       return a.minX <= b.maxX && a.maxX >= b.minX && a.minY <= b.maxY && a.maxY >= b.minY;
     }
-    return { applyStrokeStyle, strokeSmoothPath, paintStroke, renderLayersToCanvas, addPointsFromEvent, getPagePos, computeBounds, rectsIntersect };
+    return { applyStrokeStyle, strokeSmoothPath, paintStroke, paintShape, isValidShape, SHAPE_KINDS, renderLayersToCanvas, addPointsFromEvent, getPagePos, computeBounds, rectsIntersect };
   })();
 
   /* ══════════════════════════════════════════════════════════
      7. Tools — 필기 도구 전역 상태 (모든 마운트된 페이지가 공유)
   ══════════════════════════════════════════════════════════ */
   const Tools = (function () {
-    let penMode = false, tool = 'pen', color = Color.PEN_COLORS[0], size = 3, opacity = 1;
+    let penMode = false, tool = 'pen', color = Color.PEN_COLORS[0], size = 3, opacity = 1, shapeKind = 'line';
     return {
       isPenMode: () => penMode,
       setPenMode(v) { penMode = !!v; },
@@ -1449,7 +1492,10 @@
       getSize: () => size,
       setSize(s) { size = clamp(parseInt(s, 10) || size, 1, 60); },
       getOpacity: () => opacity,
-      setOpacity(o) { opacity = o; }
+      setOpacity(o) { opacity = o; },
+      // 도형 도구('shape')의 하위 종류 — 허용 목록 밖의 값은 무시한다.
+      getShapeKind: () => shapeKind,
+      setShapeKind(k) { if (k === 'line' || k === 'rect' || k === 'ellipse') shapeKind = k; }
     };
   })();
 
@@ -1461,6 +1507,11 @@
     const mounted = {}; // pos -> {scale, canvas, liveCanvas, elLayer, drawBackground}
     let isDrawing = false, curStroke = null, curLayerId = null, curPos = null;
     let liveCanvas = null, liveCtx = null, inkRAF = null;
+    // 도형 그리기 — 잉크(isDrawing/curStroke)와 상태를 섞지 않도록 별도 변수를 쓴다.
+    // curShape: {pos, layerId, kind, color, width, pointerId, x1,y1,x2,y2}. curEraseShapes는 지우개 진행 중
+    // 미리보기에서 되살릴 도형 목록(획 요소 자체에 붙이면 저장되어 버리므로 따로 둔다).
+    let curShape = null, curEraseShapes = null;
+    const SHAPE_MIN_LEN = 3; // 배율 1 페이지 px — 이보다 짧은 드래그는 도형으로 만들지 않는다
     // 블록(영역) 선택 — 확정된 선택은 groupSel, 드래그로 사각 영역을 지정하는 중이면
     // marquee, 선택된 획들을 함께 옮기는 중이면 groupDrag에 상태가 담긴다.
     let groupSel = null;  // {pos, layerId, ids:Set<string>}
@@ -1522,7 +1573,8 @@
     // wrapEl 안에 ink/ink-live/el-layer 캔버스·오버레이를 만들고 이벤트를 건다.
     // opts: { pos, widthPx, heightPx, scale, drawBackground(ctx,w,h) 또는 template,
     //         photo({url,rotationDegrees}) — "나의 폴더" 사진 페이지 전용, 선택적,
-    //         onElementPlacement(kind,pos,layerId,x,y), onTextTap, onImageTap, onMediaTap }
+    //         onElementPlacement(kind,pos,layerId,x,y), onTextTap, onImageTap, onMediaTap,
+    //         onShapeHint(code) — 도형 도구 안내용(선택적): 'touch-ignored'(손가락 입력 무시) | 'hidden-layer'(숨긴 활성 레이어에 그림) }
     function mountPage(wrapEl, opts) {
       const pos = opts.pos, scale = opts.scale;
       wrapEl.id = 'page-wrap-' + pos;
@@ -1830,6 +1882,69 @@
       ['pointerup', 'pointercancel', 'pointerleave'].forEach(evt => node.addEventListener(evt, () => { clearTimeout(pressTimer); hideCaptionTooltip(); }));
     }
 
+    /* ── 도형 그리기(직선/사각형/원) ─────────────────────────────
+       입력은 S펜(pen)과 마우스(mouse)만 허용한다(허용 목록) — 손가락·손바닥(touch 등)은 무시하고, 손가락이면
+       opts.onShapeHint('touch-ignored')로 알린다(횟수 제한은 뷰어가 한다). 진행 중 미리보기는 ink-live 캔버스에
+       그리고(잉크와 같은 rAF 합치기), 놓으면 Elements.addElement로 요소 1개를 확정한다(Undo/저장은 기존 그대로). */
+    function shapeBigEnough(kind, x1, y1, x2, y2) {
+      const dx = Math.abs(x2 - x1), dy = Math.abs(y2 - y1);
+      return kind === 'line' ? Math.hypot(dx, dy) >= SHAPE_MIN_LEN : (dx >= SHAPE_MIN_LEN && dy >= SHAPE_MIN_LEN);
+    }
+    function collectVisibleShapes(pos) {
+      const out = [];
+      Elements.getLayerList(pos).forEach(layer => {
+        if (layer.visible === false) return;
+        Elements.getElements(pos, layer.id).forEach(el => { if (el.type === 'shape' && Ink.isValidShape(el)) out.push(el); });
+      });
+      return out;
+    }
+    function beginShape(e, canvas, pos, layerId, opts) {
+      if (e.pointerType !== 'pen' && e.pointerType !== 'mouse') {
+        if (e.pointerType === 'touch' && opts.onShapeHint) opts.onShapeHint('touch-ignored');
+        return;
+      }
+      if (e.pointerType === 'mouse' && e.button !== 0) return; // 마우스 오른쪽/가운데 버튼은 무시
+      const layer = Elements.getLayerList(pos).find(l => l.id === layerId);
+      if (layer && layer.visible === false && opts.onShapeHint) opts.onShapeHint('hidden-layer'); // 그려지긴 하지만 화면에는 안 보인다
+      const p = Ink.getPagePos(e, canvas, mounted[pos].scale);
+      curShape = { pos, layerId, kind: Tools.getShapeKind(), color: Tools.getColor(), width: Tools.getSize(), pointerId: e.pointerId, x1: p.x, y1: p.y, x2: p.x, y2: p.y };
+      canvas.setPointerCapture(e.pointerId);
+      const liveC = document.getElementById('ink-live-' + pos);
+      if (liveC) liveC.getContext('2d').clearRect(0, 0, liveC.width, liveC.height);
+    }
+    // commit=false면 버린다(취소). p가 있으면(pointerup 위치) 끝점을 그 위치로 맞춘 뒤 확정한다.
+    function finishShape(commit, p) {
+      const s = curShape; curShape = null;
+      if (!s) return;
+      if (inkRAF !== null) { cancelAnimationFrame(inkRAF); inkRAF = null; }
+      const liveC = document.getElementById('ink-live-' + s.pos);
+      if (liveC) liveC.getContext('2d').clearRect(0, 0, liveC.width, liveC.height);
+      if (!commit || !mounted[s.pos]) return;
+      if (p) { s.x2 = p.x; s.y2 = p.y; }
+      if (!shapeBigEnough(s.kind, s.x1, s.y1, s.x2, s.y2)) return; // 클릭만 했거나 너무 짧은 드래그
+      const r = v => Math.round(v * 100) / 100;
+      Elements.addElement(s.pos, s.layerId, { type: 'shape', v: 1, kind: s.kind, x1: r(s.x1), y1: r(s.y1), x2: r(s.x2), y2: r(s.y2), color: s.color, width: s.width });
+      redrawPage(s.pos);
+    }
+    function cancelShape() { finishShape(false); }
+    // 지우개 진행 중 미리보기는 합성된 ink 캔버스에 직접 destination-out으로 그리므로(레이어별 오프스크린이 아님)
+    // 그 자리의 도형 픽셀도 잠깐 지워 보인다. 도형은 지워지지 않는 틀이라, 지우개를 그린 직후 이 페이지의
+    // 보이는 도형을 destination-over로(=현재 그림 아래에) 지우개 경로 상자 안에서만 다시 그려 되살린다.
+    // 펜을 떼면 redrawPage가 데이터 기준으로 정확히 다시 그리므로 이것은 진행 중 미리보기 전용이다(가장자리가
+    // 잠깐 두꺼워 보일 수 있다). 도형이 없는 페이지에서는 아무 것도 하지 않는다(예전 동작과 같음).
+    function restoreShapesUnderEraser(rctx, stroke, scale) {
+      if (!curEraseShapes || !curEraseShapes.length) return;
+      const b = Ink.computeBounds([stroke]);
+      if (!b) return;
+      const pad = (stroke.size || 3) * 3 * scale / 2 + 1; // 지우개 두께(size×3)의 절반 + 여유
+      rctx.save();
+      rctx.beginPath();
+      rctx.rect(b.minX * scale - pad, b.minY * scale - pad, (b.maxX - b.minX) * scale + pad * 2, (b.maxY - b.minY) * scale + pad * 2);
+      rctx.clip();
+      curEraseShapes.forEach(el => Ink.paintShape(rctx, el, scale, 'destination-over'));
+      rctx.restore();
+    }
+
     function setupInkEvents(canvas, pos, scale, opts) {
       canvas.addEventListener('pointerdown', e => {
         if (!Tools.isPenMode()) return;
@@ -1863,8 +1978,11 @@
           redrawPage(pos);
           return;
         }
+        // 도형 도구는 위 어느 분기에도 안 걸리므로, 아래 잉크 그리기 분기로 떨어지면 도형이 잉크 획으로 저장된다 — 반드시 여기서 가른다.
+        if (tool === 'shape') { beginShape(e, canvas, pos, layerId, opts); return; }
         isDrawing = true; curLayerId = layerId; curPos = pos;
         curStroke = { tool, color: Tools.getColor(), size: Tools.getSize(), opacity: Tools.getOpacity(), pts: [], pointerType: e.pointerType };
+        curEraseShapes = tool === 'er' ? collectVisibleShapes(pos) : null;
         canvas.setPointerCapture(e.pointerId);
         liveCanvas = document.getElementById('ink-live-' + pos);
         liveCtx = liveCanvas ? liveCanvas.getContext('2d') : null;
@@ -1881,6 +1999,24 @@
       canvas.addEventListener('pointerup', endStroke);
       canvas.addEventListener('pointerleave', endStroke);
       canvas.addEventListener('pointercancel', endStroke);
+
+      // ── 도형 그리기: 이동/놓기/취소 — 시작한 포인터(pointerId)와 시작한 페이지의 캔버스에서 온 이벤트만 처리한다
+      // (손바닥 등 다른 포인터의 이동이 진행 중인 도형의 끝점을 움직이지 못하게). 잉크의 리스너와는 독립이다. ──
+      canvas.addEventListener('pointermove', e => {
+        if (!curShape || curShape.pos !== pos || e.pointerId !== curShape.pointerId) return;
+        if (e.buttons === 0) { finishShape(true); return; } // pointerup 유실 방어 — 마지막으로 그린 끝점 그대로 확정
+        const p = Ink.getPagePos(e, canvas, mounted[pos].scale);
+        curShape.x2 = p.x; curShape.y2 = p.y;
+        scheduleInkFrame();
+      });
+      canvas.addEventListener('pointerup', e => {
+        if (!curShape || curShape.pos !== pos || e.pointerId !== curShape.pointerId) return;
+        finishShape(true, Ink.getPagePos(e, canvas, mounted[pos].scale));
+      });
+      canvas.addEventListener('pointercancel', e => {
+        if (!curShape || curShape.pos !== pos || e.pointerId !== curShape.pointerId) return;
+        cancelShape(); // 손바닥 인식 등으로 브라우저가 취소한 입력은 도형으로 확정하지 않는다
+      });
 
       // ── 블록 선택: 사각 영역(마퀴) 드래그 ──
       canvas.addEventListener('pointermove', e => {
@@ -1970,6 +2106,14 @@
     function scheduleInkFrame() { if (inkRAF !== null) return; inkRAF = requestAnimationFrame(flushInkFrame); }
     function flushInkFrame() {
       inkRAF = null;
+      if (curShape) { // 도형 미리보기 — 시작점~현재점으로 ink-live를 매 프레임 다시 그린다
+        const sm = mounted[curShape.pos], liveC = document.getElementById('ink-live-' + curShape.pos);
+        if (!sm || !liveC) { curShape = null; return; } // 그리는 도중 화면이 다시 만들어져 캔버스가 사라졌다
+        const lctx = liveC.getContext('2d');
+        lctx.clearRect(0, 0, liveC.width, liveC.height);
+        Ink.paintShape(lctx, { type: 'shape', v: 1, kind: curShape.kind, x1: curShape.x1, y1: curShape.y1, x2: curShape.x2, y2: curShape.y2, color: curShape.color, width: curShape.width }, sm.scale);
+        return;
+      }
       if (!isDrawing || !curStroke) return;
       const scale = mounted[curPos].scale;
       if (curStroke.tool === 'er') {
@@ -1977,6 +2121,7 @@
         if (!realCanvas) return;
         const rctx = realCanvas.getContext('2d');
         rctx.save(); Ink.applyStrokeStyle(rctx, curStroke, scale); Ink.strokeSmoothPath(rctx, curStroke.pts, scale); rctx.restore();
+        restoreShapesUnderEraser(rctx, curStroke, scale); // 지워지지 않는 도형을 되살린다(도형이 없으면 아무 일도 안 함)
         return;
       }
       if (!liveCtx) return;
@@ -1994,13 +2139,14 @@
         Elements.addElement(curPos, curLayerId, curStroke);
         redrawPage(curPos);
       }
-      curStroke = null; curLayerId = null; curPos = null;
+      curStroke = null; curLayerId = null; curPos = null; curEraseShapes = null;
     }
-    function resetStuckDrawing() { endStroke(); }
+    // 창 전환/포커스 상실 때 진행 중이던 획은 확정하지만(예전 동작), 반쯤 그려진 도형은 확정하지 않고 버린다.
+    function resetStuckDrawing() { endStroke(); cancelShape(); }
     window.addEventListener('blur', resetStuckDrawing);
     document.addEventListener('visibilitychange', () => { if (document.hidden) resetStuckDrawing(); });
 
-    function unmountAll() { for (const k in mounted) delete mounted[k]; groupSel = null; marquee = null; groupDrag = null; }
+    function unmountAll() { for (const k in mounted) delete mounted[k]; groupSel = null; marquee = null; groupDrag = null; curShape = null; }
 
     // 마우스 휠로 이전/다음 페이지 이동. 확대 상태(scale>1)면 휠은 화면을 훑어보는
     // 용도가 우선이어야 하므로 페이지 전환을 하지 않고, 필기 모드 중에도 화면이

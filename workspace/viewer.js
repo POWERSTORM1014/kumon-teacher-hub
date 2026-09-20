@@ -782,10 +782,10 @@ function drawTextElementForExport(ctx, el) {
   ctx.restore();
 }
 // 페이지 하나를 "배경 + 필기 + 삽입 요소"가 전부 합쳐진 하나의 캔버스로 그린다.
-// 필기(펜/형광펜/지우개)는 Engine.Ink.renderLayersToCanvas()(화면에 실제 그려지는
-// 것과 완전히 같은 함수, shared/annotation-engine.js)를 그대로 재사용하므로
-// 필기가 빠질 일이 없다. 오디오/영상 핀(el.type==='media')은 인쇄물에 의미가
-// 없어 제외한다.
+// 필기(펜/형광펜/지우개)와 도형(직선/사각형/원)은 Engine.Ink.renderLayersToCanvas()(화면에 실제
+// 그려지는 것과 완전히 같은 함수, shared/annotation-engine.js)를 그대로 재사용하므로 빠질 일이
+// 없다 — 도형은 그 함수 안에서 모든 잉크보다 먼저(=아래에) 그려진다. 오디오/영상 핀
+// (el.type==='media')은 인쇄물에 의미가 없어 제외한다.
 async function renderPageToExportCanvas(pos, entry) {
   // Elements.getLayerList()/getAllElements()는 이 기기의 로컬 저장소만 읽는다
   // (Storage.loadLayer) — 이 페이지를 이 기기에서 한 번도 연 적이 없으면(다른
@@ -941,7 +941,8 @@ async function renderOnePage(container, pos, scale) {
     onTextTap: (p, layerId, el) => openTextElementModal(p, layerId, el.x, el.y, el),
     onImageTap: (p, layerId, el) => openImageElementModal(p, layerId, el),
     onMediaTap: (p, layerId, el, readonly) => openMediaElementModal(p, layerId, el.x, el.y, el, readonly),
-    onLockedInput: () => showToast('페이지 구성을 갱신하는 중이에요 — 잠시 후 다시 시도해주세요')
+    onLockedInput: () => showToast('페이지 구성을 갱신하는 중이에요 — 잠시 후 다시 시도해주세요'),
+    onShapeHint: handleShapeHint
   });
   if (isInserted && entry.label) {
     const labelBar = document.createElement('div');
@@ -1030,20 +1031,73 @@ function togglePen(skipLock) {
   document.getElementById('pen-toolbar').classList.toggle('show', on);
   Engine.Page.setPenModeClasses(on);
   updateColorPanelVisibility();
+  updateShapeKindPanel();
   // 필기 도구를 처음 켜는 시점에 현재 페이지 편집 잠금을 시도한다(skipLock은
   // forceLockTakeover가 이미 잠금을 확보해둔 뒤 UI만 켤 때 중복 요청을 피하려고 씀).
   if (!skipLock) { if (on) acquireLockForCurrentPage(false); else releaseCurrentLock(); }
 }
 function setTool(t) {
-  const valid = ['pen', 'hi', 'er', 'select', 'text', 'media'];
+  // 엔진이 옛 버전이면(새 화면 파일과 옛 엔진이 섞여 온 경우) 'shape'는 엔진이 모르는 도구라 잉크 획으로 저장돼 버린다 — 막는다.
+  if (t === 'shape' && !engineHasShapeSupport()) return;
+  const valid = ['pen', 'hi', 'er', 'select', 'text', 'media', 'shape'];
   if (Engine.Tools.getTool() === 'select' && t !== 'select') Engine.Page.clearSelection();
   Engine.Tools.setTool(t);
-  valid.forEach(x => document.getElementById('pt-' + x).classList.toggle('on', x === t));
+  valid.forEach(x => { const b = document.getElementById('pt-' + x); if (b) b.classList.toggle('on', x === t); });
   updateColorPanelVisibility();
+  updateShapeKindPanel();
+  if (t === 'shape') showShapeFirstUseNotice();
 }
 function updateColorPanelVisibility() {
   const g = document.getElementById('pt-color-group');
-  g.style.display = (Engine.Tools.isPenMode() && ['pen', 'hi', 'text'].includes(Engine.Tools.getTool())) ? 'flex' : 'none';
+  g.style.display = (Engine.Tools.isPenMode() && ['pen', 'hi', 'text', 'shape'].includes(Engine.Tools.getTool())) ? 'flex' : 'none';
+}
+
+/* ══ 도형 도구(직선/사각형/원) UI ═════════════════════════════
+   도형 그리기 자체는 엔진(shared/annotation-engine.js)이 한다 — 여기서는 도구/종류 선택 UI와 안내만 맡는다.
+   색과 굵기는 기존 컨트롤(pt-colors, pt-size)을 그대로 쓴다. 엔진이 옛 버전이면 도형 UI를 숨긴다. */
+let engineShapeSupportCache = null;
+function engineHasShapeSupport() {
+  if (engineShapeSupportCache !== null) return engineShapeSupportCache;
+  try {
+    engineShapeSupportCache = !!(Engine.Tools && typeof Engine.Tools.setShapeKind === 'function' && typeof Engine.Tools.getShapeKind === 'function'
+      && Engine.Ink && typeof Engine.Ink.paintShape === 'function');
+  } catch (e) { engineShapeSupportCache = false; }
+  return engineShapeSupportCache;
+}
+function updateShapeKindPanel() {
+  const g = document.getElementById('pt-shape-kinds');
+  if (!g) return;
+  g.style.display = (engineHasShapeSupport() && Engine.Tools.isPenMode() && Engine.Tools.getTool() === 'shape') ? 'flex' : 'none';
+}
+function setShapeKind(k) {
+  if (!engineHasShapeSupport()) return;
+  Engine.Tools.setShapeKind(k);
+  ['line', 'rect', 'ellipse'].forEach(x => { const b = document.getElementById('pt-shape-' + x); if (b) b.classList.toggle('on', x === Engine.Tools.getShapeKind()); });
+}
+let shapeFirstUseShown = false, shapeTouchHintShown = false, shapeHiddenHintAt = 0;
+// 옛 버전 화면에서는 도형이 보이지 않는다(데이터는 그대로 보존됨) — 도형 도구를 처음 고를 때 한 번만 알린다.
+function showShapeFirstUseNotice() {
+  if (shapeFirstUseShown) return;
+  shapeFirstUseShown = true;
+  showToast('도형은 최신 버전에서만 보여요 — 옛 버전 기기에서는 안 보일 수 있어요');
+}
+// 엔진이 mountPage의 onShapeHint로 부른다: 손가락 입력은 첫 시도만, 숨긴 활성 레이어 안내는 5초에 한 번만 알린다.
+function handleShapeHint(code) {
+  if (code === 'touch-ignored') {
+    if (shapeTouchHintShown) return;
+    shapeTouchHintShown = true;
+    showToast('도형은 S펜이나 마우스로 그려주세요 (손가락은 무시돼요)');
+  } else if (code === 'hidden-layer') {
+    const now = Date.now();
+    if (now - shapeHiddenHintAt < 5000) return;
+    shapeHiddenHintAt = now;
+    showToast('숨겨진 레이어라 도형이 보이지 않아요 — 레이어를 다시 켜주세요');
+  }
+}
+function initShapeUi() {
+  if (engineHasShapeSupport()) return;
+  const b = document.getElementById('pt-shape');
+  if (b) b.style.display = 'none'; // 옛 엔진 — 도형 도구를 아예 보이지 않게 한다
 }
 function setPenSize(val, source) {
   const slider = document.getElementById('pt-size');
@@ -2052,6 +2106,7 @@ document.addEventListener('DOMContentLoaded', () => {
   Engine.Events.on(handleStructureChanged);
   // 저장 상태 표시 초기화가 어떤 이유로든 실패해도 그 뒤의 책 열기(initFromUrl 등)는 반드시 실행돼야 한다.
   try { initStorageStatus(); } catch (e) { console.warn('[viewer] 저장 상태 표시를 초기화하지 못했어요 — 책 열기는 계속합니다', e); }
+  try { initShapeUi(); } catch (e) { console.warn('[viewer] 도형 UI를 초기화하지 못했어요 — 책 열기는 계속합니다', e); }
   makeDialogDraggable('te-box', 'te-drag-handle');
   makeDialogDraggable('ie-box', 'ie-drag-handle');
   Engine.PWA.registerServiceWorker('../sw.js', {}); // 앱 셸만 SW가 자동 캐싱
