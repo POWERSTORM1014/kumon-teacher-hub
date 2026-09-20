@@ -710,10 +710,17 @@ function rotateCurrentPhotoPage() {
    데이터는 Engine.Elements/Engine.Ink의 기존 읽기 전용 API만 그대로 재사용한다
    — saveLayer/loadLayer 자체나 화면 렌더링 로직(mountPage/redrawPage 등)은
    전혀 건드리지 않는다. */
-// 사진/삽입 이미지는 R2 공개 버킷(다른 오리진)에서 온다 — crossOrigin='anonymous'
-// 없이 캔버스에 그리면 "캔버스 오염"으로 canvas.toDataURL()이 예외를 던진다.
-// 그 버킷 도메인이 Access-Control-Allow-Origin: * 를 이미 내려주는 것을 확인했다
-// (data: URL은 애초에 같은 오리진 취급이라 crossOrigin이 필요 없어 건너뛴다).
+// PDF 내보내기에서 이미지를 불러오는 "유일한" 진입점 — 사진 배경, 삽입 이미지
+// 등 앞으로 내보내기에 이미지가 추가되는 모든 곳은 반드시 이 함수 하나만 거쳐야
+// 한다(drawPhotoBackgroundForExport/drawImageElementForExport는 이미 로딩된
+// img만 인자로 받고, 자기 스스로 new Image()/fetch를 절대 하지 않는다 — 새
+// 내보내기용 그리기 함수를 추가할 때도 이 규칙을 지킬 것). 사진/삽입 이미지는
+// R2 공개 버킷(다른 오리진)에서 온다 — crossOrigin='anonymous' 없이 캔버스에
+// 그리면 "캔버스 오염"으로 canvas.toDataURL()이 예외를 던진다. 그 버킷 도메인이
+// Access-Control-Allow-Origin: * 를 이미 내려주는 것을 확인했다(data: URL은
+// 애초에 같은 오리진 취급이라 crossOrigin이 필요 없어 건너뛴다). crossOrigin
+// 처리를 이렇게 한 곳에 모아두면, 앞으로 이미지 관련 기능이 추가돼도 이 함수만
+// 쓰는 한 자동으로 안전해서 같은 종류의 버그가 다시 갈라져 재발할 일이 없다.
 function loadImageForExport(src) {
   return new Promise((resolve, reject) => {
     const img = new Image();
@@ -726,6 +733,8 @@ function loadImageForExport(src) {
 // buildPagePhotoNode()(shared/annotation-engine.js)와 완전히 같은 contain-fit
 // 계산을 캔버스 버전으로 옮긴 것 — 캔버스 중심을 기준으로 회전시키면 DOM 버전처럼
 // 90/270도일 때 가로세로를 따로 맞바꿔줄 필요 없이 그대로 처리된다.
+// img는 항상 loadImageForExport()로 이미 로딩된 것만 받는다 — 여기서 새로
+// 불러오지 않는다.
 function drawPhotoBackgroundForExport(ctx, img, w, h, entry) {
   const rot = entry.rotationDegrees || 0;
   const rotated = (rot === 90 || rot === 270);
@@ -743,6 +752,8 @@ function drawPhotoBackgroundForExport(ctx, img, w, h, entry) {
 }
 // buildImageNode()의 회전/뒤집기/투명도/밝기를 캔버스로 재현 — 요소 중심을 기준으로
 // 통째로 회전시키므로, DOM 버전이 90/270도에서 하던 width/height 맞바꿈이 필요 없다.
+// img는 항상 loadImageForExport()로 이미 로딩된 것만 받는다 — 여기서 새로
+// 불러오지 않는다.
 function drawImageElementForExport(ctx, img, el) {
   ctx.save();
   if (el.opacity != null) ctx.globalAlpha = el.opacity;
@@ -776,6 +787,16 @@ function drawTextElementForExport(ctx, el) {
 // 필기가 빠질 일이 없다. 오디오/영상 핀(el.type==='media')은 인쇄물에 의미가
 // 없어 제외한다.
 async function renderPageToExportCanvas(pos, entry) {
+  // Elements.getLayerList()/getAllElements()는 이 기기의 로컬 저장소만 읽는다
+  // (Storage.loadLayer) — 이 페이지를 이 기기에서 한 번도 연 적이 없으면(다른
+  // 기기에서만 만들었거나 이번 세션에서 아직 안 열어본 페이지) 로컬 캐시가
+  // 비어있는 기본값(빈 레이어)일 수 있고, 그러면 잉크와 그 페이지에 삽입된
+  // 이미지 요소가 둘 다(같은 strokes 데이터라서) 예외 하나 없이 그냥 빠진다.
+  // "페이지 복사" 기능에서 이미 겪은 문제와 같은 종류라, 그때와 동일하게
+  // Engine.Sync.checkPageSync()로 서버와 한 번 맞춰본 뒤에 레이어를 읽는다 —
+  // checkPageSync는 세션당 같은 페이지는 한 번만 실제로 확인하므로(내부 캐시),
+  // 여러 페이지를 순회하는 이 내보내기 흐름에서 반복 호출해도 낭비가 적다.
+  await Engine.Sync.checkPageSync(bookId, pos);
   const w = entry.width, h = entry.height;
   const canvas = document.createElement('canvas');
   canvas.width = w; canvas.height = h;
