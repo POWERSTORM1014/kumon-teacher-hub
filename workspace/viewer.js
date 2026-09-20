@@ -791,7 +791,18 @@ async function renderPageToExportCanvas(pos, entry) {
   }
   const layers = Engine.Elements.getLayerList(pos);
   const strokesByLayer = Engine.Elements.getAllElements(pos);
-  Engine.Ink.renderLayersToCanvas(ctx, layers, strokesByLayer, 1, w, h);
+  // Engine.Ink.renderLayersToCanvas()는 화면의 잉크 전용 오버레이 캔버스(배경은
+  // 항상 별도의 DOM 레이어에 있음)에 그릴 때 쓰는 함수라, 시작하자마자
+  // ctx.clearRect()로 캔버스 전체를 지운다. 방금 배경(흰색+사진/템플릿)을 그려둔
+  // 이 ctx에 그대로 넘기면 그 배경이 통째로 지워져 투명해지고, JPEG로 저장할 때
+  // 브라우저가 투명 영역을 검정으로 채워버린다(모든 페이지가 검정으로 나오던
+  // 버그의 원인). 그래서 잉크는 비어있는 별도의 임시 캔버스에 그리게 한 뒤(그
+  // 캔버스는 어차피 비어있으니 clearRect가 아무 영향도 없음) 배경 위에 합성한다
+  // — Ink.renderLayersToCanvas() 자체는 화면 렌더링 경로에 영향 없이 그대로 둔다.
+  const inkCanvas = document.createElement('canvas');
+  inkCanvas.width = w; inkCanvas.height = h;
+  Engine.Ink.renderLayersToCanvas(inkCanvas.getContext('2d'), layers, strokesByLayer, 1, w, h);
+  ctx.drawImage(inkCanvas, 0, 0);
   for (const layer of layers) {
     if (layer.visible === false) continue;
     for (const el of Engine.Elements.getElements(pos, layer.id)) {
