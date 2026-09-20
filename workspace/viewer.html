@@ -248,6 +248,17 @@ body{font-family:var(--font);background:var(--bg);color:var(--ink);height:100vh;
 .sb-sync.saved{color:var(--green);background:rgba(26,173,110,0.12);}
 .sb-sync.saving{color:var(--accent);background:var(--accent-light);}
 .sb-sync.offline{color:var(--ink-light);background:var(--bg);}
+/* 로컬 저장 실패 — 엔진의 경고 배너(#kth-storage-banner)를 접어도 이 붉은 표시는 실패가 이어지는 동안 계속 남는다. 누르면 배너가 다시 펼쳐진다. */
+.sb-sync.failed{color:#fff;background:#c62828;font-weight:700;cursor:pointer;}
+/* 이 기기의 필기 저장 사용량(추정) — 80% 이상 주황, 95% 이상 붉은색. 누르면 종류별 사용량 팝업(삭제 기능 없음). */
+.sb-usage{font-size:11px;font-family:var(--mono);color:var(--ink-mid);padding:2px 8px;border-radius:10px;flex-shrink:0;cursor:pointer;white-space:nowrap;}
+.sb-usage.warn{color:#7a3e00;background:#ffcc80;font-weight:700;}
+.sb-usage.danger{color:#fff;background:#c62828;font-weight:700;}
+#storage-usage-pop{display:none;position:fixed;left:12px;bottom:calc(34px + env(safe-area-inset-bottom,0px));z-index:900;max-width:min(360px,calc(100vw - 24px));background:var(--surface);color:var(--ink);border:1px solid var(--border);border-radius:10px;box-shadow:var(--shadow-lg);padding:12px 14px;font-size:12px;line-height:1.7;}
+#storage-usage-pop.open{display:block;}
+#storage-usage-pop .sup-title{font-weight:700;margin-bottom:4px;}
+#storage-usage-pop .sup-row{display:flex;justify-content:space-between;gap:16px;font-family:var(--mono);font-size:11.5px;}
+#storage-usage-pop .sup-note{margin-top:6px;font-size:11px;color:var(--ink-mid);line-height:1.5;}
 
 #bookmark-modal,#layer-panel{position:fixed;top:0;right:0;bottom:0;z-index:500;display:none;pointer-events:none;}
 #layer-panel{z-index:700;}
@@ -450,6 +461,7 @@ body{font-family:var(--font);background:var(--bg);color:var(--ink);height:100vh;
     <div class="statusbar">
       <span class="sb-info" id="sb-filename">파일명</span>
       <span class="sb-sync saved" id="sb-sync">✅ 저장됨</span>
+      <span class="sb-usage" id="sb-usage" onclick="toggleStorageUsagePop()" title="이 기기의 필기 저장 공간 사용량(추정)">저장 공간 확인 중…</span>
       <div class="sb-spacer"></div>
       <span class="sb-info" id="sb-page">페이지: 1</span>
     </div>
@@ -597,6 +609,8 @@ body{font-family:var(--font);background:var(--bg);color:var(--ink);height:100vh;
 </div>
 
 <div id="lock-conflict-modal"><div class="ou-box"><div class="ou-icon">🔒</div><div class="ou-text" id="lock-conflict-text">다른 기기에서 편집 중입니다.</div><div class="ou-actions"><button class="dlg-btn" onclick="closeLockConflict()">보기만 하기</button><button class="dlg-btn primary" onclick="forceLockTakeover()">강제로 이어받기</button></div></div></div>
+
+<div id="storage-usage-pop"></div>
 
 <div class="toast" id="toast"></div>
 <div class="toast toast-action" id="toast-action"><span id="toast-action-msg"></span><button id="toast-action-btn" class="toast-action-btn"></button></div>

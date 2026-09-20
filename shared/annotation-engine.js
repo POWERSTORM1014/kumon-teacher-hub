@@ -14,6 +14,8 @@
 //   ink-live-<pos>    (그리는 중인 스트로크만 매 프레임 다시 그리는 캔버스)
 //   elwrap-<pos>      (텍스트/이미지/오디오·영상 핀 DOM 오버레이 컨테이너)
 // redrawPage(pos) 등은 이 id로 요소를 다시 찾으므로, 뷰어는 이 규칙을 반드시 지켜야 한다.
+// 그 외 엔진이 스스로 만드는 요소: #kth-storage-banner(로컬 저장 실패 경고 — 뷰어의 #lock-banner
+// 바로 뒤, 없으면 #app 맨 앞에 끼워 넣는다. 아래 StorageBanner 참고).
 
 (function (global) {
   'use strict';
@@ -79,8 +81,130 @@
       return { layers: [{ id: 'default', name: '기본 레이어', visible: true }], strokes: {}, activeLayerId: 'default', savedAt: '', lastSyncAt: '' };
     }
 
+    // ── 로컬 저장 실패 처리 ──
+    // localStorage 쓰기가 실패(용량 초과, 저장소 차단 등)해도 saveLayer()는 예외를 던지지
+    // 않는다 — 예외가 포인터 이벤트 핸들러까지 올라가면 방금 그린 획이 화면에서 사라지기
+    // 때문이다. 대신 저장에 실패한 "살아있는 최신 record"를 메모리(unsavedLocal)에 붙잡아 두고,
+    //   1) loadLayer()가 이 메모리본을 먼저 돌려준다(캐시가 비워진 뒤에도 필기가 유지됨),
+    //   2) 서버 푸시는 그대로 계속한다(이 record 객체를 직접 넘기므로 localStorage를 다시
+    //      읽지 않는다), 서버에 올라간 최신본은 serverConfirmed에 기록한다,
+    //   3) 서버 확인이 안 된 최신본이 남아 있는 동안은 15초마다 푸시를 다시 시도하고, 창을
+    //      닫으려 하면 확인창을 띄운다(아래 beforeunload).
+    // 이 상태(메모리)는 저장 형식이나 서버로 보내는 내용을 바꾸지 않고, 어떤 데이터도
+    // 자동으로 지우지 않는다(오래된 백업 포함).
+    const unsavedLocal = new Map();   // fullKey -> { bookId, pageId, record }
+    const serverConfirmed = new Set(); // unsavedLocal 중 "이 최신본이 서버에 올라간 것을 확인한" fullKey
+    let lastWriteError = null;
+    const RETRY_PUSH_MS = 15000;
+    let retryTimer = null, retryBusy = false;
+
+    function isQuotaError(e) {
+      return !!e && (e.name === 'QuotaExceededError' || e.name === 'NS_ERROR_DOM_QUOTA_REACHED' || e.code === 22 || e.code === 1014);
+    }
+    // 화면 갱신(배너/상태표시)은 현재 핸들러(포인터 이벤트 등)와 분리해서 낸다 — 구독자의
+    // 오류가 저장 경로로 새어 들어가지 않게 하기 위함이다.
+    function emitHealth(detail) {
+      setTimeout(function () {
+        try { Events.emitStorageHealth(detail); } catch (e) { console.warn('[ann-engine] 저장 상태 알림 실패', e); }
+      }, 0);
+    }
+    function unconfirmedKeys() {
+      const out = [];
+      unsavedLocal.forEach(function (item, k) { if (!serverConfirmed.has(k)) out.push(k); });
+      return out;
+    }
+    function ensureRetryTimer() {
+      if (retryTimer) return;
+      retryTimer = setInterval(retryUnsavedPush, RETRY_PUSH_MS);
+    }
+    async function retryUnsavedPush() {
+      if (retryBusy) return;
+      const keys = unconfirmedKeys();
+      if (!keys.length) { clearInterval(retryTimer); retryTimer = null; return; }
+      retryBusy = true;
+      try {
+        for (const k of keys) {
+          const item = unsavedLocal.get(k);
+          if (item) await pushLayerToServer(item.bookId, item.pageId, item.record);
+        }
+      } finally { retryBusy = false; }
+    }
+    // 레이어 레코드를 localStorage에 쓴다 — 예외를 던지지 않고 성공 여부만 돌려준다.
+    // 실패하면 최신본을 unsavedLocal에 보관하고, 성공하면(이전 실패가 있었다면) 복구로 처리한다.
+    // isRetry=true는 "이미 실패로 보관 중인 같은 내용을 다시 써 보는" 호출(서버 푸시 직후의
+    // setLastSyncAt, 이미지 치환 직후)이다 — 새 필기가 아니므로 서버 확인 표시를 지우지 않고,
+    // 다시 실패해도 새 실패로 알리지 않는다.
+    function writeLayerLocal(bookId, pageId, record, isRetry) {
+      const key = fullKey(bookId, pageId);
+      try {
+        localStorage.setItem(lsLayerKey(bookId, pageId), JSON.stringify(record));
+      } catch (e) {
+        if (isRetry) { unsavedLocal.set(key, { bookId, pageId, record }); return false; }
+        const isNew = !unsavedLocal.has(key);
+        unsavedLocal.set(key, { bookId, pageId, record });
+        serverConfirmed.delete(key); // 새로 저장에 실패한 이 최신본은 아직 서버에서 확인되지 않았다
+        lastWriteError = e;
+        ensureRetryTimer();
+        console.warn('[ann-engine] 로컬 저장 실패 — 메모리에 보관하고 서버 저장을 계속 시도합니다', key, e);
+        emitHealth({ type: 'failed', key, isNewPage: isNew, errorKind: isQuotaError(e) ? 'quota' : 'other' });
+        return false;
+      }
+      if (unsavedLocal.delete(key)) {
+        serverConfirmed.delete(key);
+        emitHealth({ type: 'recovered', key });
+      }
+      return true;
+    }
+    function getHealth() {
+      return {
+        localFailing: unsavedLocal.size > 0,
+        unsavedPages: unsavedLocal.size,
+        unconfirmedPages: unconfirmedKeys().length,
+        errorKind: isQuotaError(lastWriteError) ? 'quota' : 'other'
+      };
+    }
+    // 서버 확인이 안 된 최신본이 이 기기 메모리에만 남아 있으면 창을 닫을 때 경고한다.
+    window.addEventListener('beforeunload', function (e) {
+      if (unconfirmedKeys().length) { e.preventDefault(); e.returnValue = ''; return ''; }
+    });
+
+    // ── 저장 사용량 추정 — 필기 저장소(localStorage)의 (키+값) 글자 수를 종류별로 합산한다.
+    // 브라우저마다 실제 한도가 다르므로 한도는 "약 5MB(5,242,880자)"로 가정한 추정치일 뿐이다.
+    // 삭제 기능은 없다(읽기 전용). 값 전체를 훑는 비용이 있어 2초간 결과를 재사용한다.
+    const STORAGE_LIMIT_ESTIMATE = 5 * 1024 * 1024;
+    let usageCache = null;
+    function getUsage(force) {
+      const now = Date.now();
+      if (!force && usageCache && now - usageCache.at < 2000) return usageCache.data;
+      const parts = {
+        layer: { size: 0, count: 0 }, backup: { size: 0, count: 0 }, pageOrder: { size: 0, count: 0 },
+        otherAnn: { size: 0, count: 0 }, other: { size: 0, count: 0 }
+      };
+      const layerPrefix = LS_PREFIX + ':layer:', backupPrefix = LS_PREFIX + ':backup:', orderPrefix = LS_PREFIX + ':pageorder:';
+      let total = 0;
+      try {
+        for (let i = 0; i < localStorage.length; i++) {
+          const k = localStorage.key(i);
+          if (k === null) continue;
+          let v = '';
+          try { v = localStorage.getItem(k) || ''; } catch (e) { /* 읽기 실패한 키는 길이 0으로 셈 */ }
+          const n = k.length + v.length;
+          total += n;
+          const bucket = k.startsWith(layerPrefix) ? parts.layer : k.startsWith(backupPrefix) ? parts.backup
+            : k.startsWith(orderPrefix) ? parts.pageOrder : k.startsWith(LS_PREFIX + ':') ? parts.otherAnn : parts.other;
+          bucket.size += n; bucket.count++;
+        }
+      } catch (e) { /* localStorage 접근 자체가 막힌 환경 — 0으로 표시 */ }
+      const data = { total, limit: STORAGE_LIMIT_ESTIMATE, ratio: total / STORAGE_LIMIT_ESTIMATE, parts, estimated: true };
+      usageCache = { at: now, data };
+      return data;
+    }
+
     // ── 필기/레이어 데이터: saveLayer/loadLayer가 유일한 진입점 ──
     function loadLayer(bookId, pageId) {
+      // 로컬 저장에 실패해 메모리에만 있는 최신본이 있으면 그것이 가장 새 데이터다.
+      const pending = unsavedLocal.get(fullKey(bookId, pageId));
+      if (pending) return pending.record;
       try {
         const raw = localStorage.getItem(lsLayerKey(bookId, pageId));
         if (raw) {
@@ -93,7 +217,10 @@
     function saveLayer(bookId, pageId, record, opts) {
       opts = opts || {};
       record.savedAt = opts.savedAt || nowIso();
-      localStorage.setItem(lsLayerKey(bookId, pageId), JSON.stringify(record));
+      // 로컬 저장 실패는 예외 대신 writeLayerLocal이 처리한다(위 "로컬 저장 실패 처리" 참고).
+      // skipServerPush 호출(서버에서 받은 내용을 그대로 반영하는 경우)은 서버가 이미 같은
+      // 내용을 갖고 있으므로 서버 확인 상태로 표시한다.
+      if (!writeLayerLocal(bookId, pageId, record) && opts.skipServerPush) serverConfirmed.add(fullKey(bookId, pageId));
       // record(=Elements가 들고 있는 살아있는 메모리 객체)를 그대로 넘긴다 — 나중에
       // pushLayerToServer가 dataURL을 서버 경로로 치환할 때 이 객체를 직접 고쳐야
       // 화면에 이미 붙어있는 <img>가 참조하는 값도 같이 갱신된다(별도로 다시
@@ -102,12 +229,28 @@
       return record;
     }
     function setLastSyncAt(bookId, pageId, iso) {
-      const rec = loadLayer(bookId, pageId);
+      const rec = loadLayer(bookId, pageId); // 로컬 저장에 실패한 최신본이 있으면 그 메모리본이다
       rec.lastSyncAt = iso;
-      localStorage.setItem(lsLayerKey(bookId, pageId), JSON.stringify(rec));
+      if (unsavedLocal.has(fullKey(bookId, pageId))) {
+        // 서버 푸시가 성공한 지금 다시 로컬 저장을 시도한다(이미지가 서버 경로로 바뀌어 record가
+        // 작아졌을 수 있다). 성공하면 복구, 실패하면 메모리본을 그대로 유지한다. 낡은 로컬본에
+        // "동기화됨"을 표시해 나중에 서버의 새 데이터를 덮어쓰게 되는 일이 없도록, 실패했을 때
+        // 로컬 저장소는 건드리지 않는다.
+        writeLayerLocal(bookId, pageId, rec, true);
+        return;
+      }
+      try {
+        localStorage.setItem(lsLayerKey(bookId, pageId), JSON.stringify(rec));
+      } catch (e) {
+        // lastSyncAt 표식만 못 남긴 경우 — 필기 본문은 이미 저장돼 있으니 조용히 넘어가도 데이터는
+        // 안전하다. 다음에 이 페이지를 열 때 checkPageSync가 다시 계산한다(용량이 찬 상태라면
+        // 이후 필기 저장에서 경고가 뜬다).
+      }
     }
     function removeLayer(bookId, pageId) {
+      const key = fullKey(bookId, pageId);
       localStorage.removeItem(lsLayerKey(bookId, pageId));
+      if (unsavedLocal.delete(key)) { serverConfirmed.delete(key); emitHealth({ type: 'cleared', key }); }
     }
 
     // 디바운스 키는 bookId 하나가 아니라 bookId+pageId 조합이어야 한다 — 같은 책의
@@ -124,13 +267,19 @@
       if (!(await ping())) return { ok: false, offline: true };
       try {
         await migrateDataUrlAssets(bookId, pageId, rec);
+        const sentSavedAt = rec.savedAt; // 아래 fetch 바디와 같은 시점의 버전 — 푸시 도중 더 새 필기가 저장됐는지 구별하는 데 쓴다
         const res = await fetch(API_BASE_URL + 'layers/' + encodeURIComponent(fullKey(bookId, pageId)), {
           method: 'POST', headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ layers: rec.layers, strokes: rec.strokes, device: Device.getLabel(), deviceId: Device.getId(), deviceType: Device.getTypeDesc() })
         });
         if (!res.ok) throw new Error('save failed (' + res.status + ')');
         const j = await res.json();
-        setLastSyncAt(bookId, pageId, j.savedAt);
+        // 로컬 저장에 실패해 메모리에만 있던 최신본이 방금 그대로 서버에 올라갔다면 "서버 확인됨"으로
+        // 표시한다(그 뒤에 더 새 필기가 저장됐다면 savedAt이 달라서 미확인 상태로 남는다).
+        const fk = fullKey(bookId, pageId), unsaved = unsavedLocal.get(fk);
+        if (unsaved && unsaved.record === rec && rec.savedAt === sentSavedAt) serverConfirmed.add(fk);
+        setLastSyncAt(bookId, pageId, j.savedAt); // 로컬 저장이 이제 성공하면 여기서 복구 처리된다
+        if (unsavedLocal.has(fk)) emitHealth({ type: 'server-confirmed', key: fk });
         return { ok: true, savedAt: j.savedAt };
       } catch (e) {
         console.warn('[ann-engine] 서버 저장 실패', pageId, e);
@@ -160,7 +309,13 @@
           }
         }
       }
-      if (changed) localStorage.setItem(lsLayerKey(bookId, pageId), JSON.stringify(rec));
+      if (changed) {
+        // 이미지가 서버 경로로 바뀐 record를 다시 저장한다. 실패해도(용량이 찬 상태) 이미지 파일은
+        // 이미 서버에 있고 로컬에는 이전 버전이 그대로 남아 있으므로 데이터는 안전하다 — 다음 필기
+        // 저장이 같은 record를 다시 쓰면서 실패 여부를 알려준다.
+        if (unsavedLocal.has(fullKey(bookId, pageId))) writeLayerLocal(bookId, pageId, rec, true);
+        else { try { localStorage.setItem(lsLayerKey(bookId, pageId), JSON.stringify(rec)); } catch (e) { /* 위 설명 참고 */ } }
+      }
       return changed;
     }
 
@@ -398,6 +553,7 @@
 
     return {
       loadLayer, saveLayer, removeLayer, setLastSyncAt, pushLayerToServer, fetchRemoteLayer, uploadAsset,
+      getHealth, getUsage,
       loadPageOrder, savePageOrder, fetchRemotePageOrder,
       ping, stashBackup, getBackups, restoreBackup, deleteBackup, removePageTraces,
       recordRecent, getRecents,
@@ -510,7 +666,128 @@
     function onLockChanged(handler) { target.addEventListener(LOCK_CHANGED, handler); }
     function offLockChanged(handler) { target.removeEventListener(LOCK_CHANGED, handler); }
 
-    return { STRUCTURE_CHANGED, emitStructureChanged, isLocked, on, off, LOCK_CHANGED, emitLockChanged, onLockChanged, offLockChanged };
+    // 로컬 저장 실패/복구/서버 확인 상태 변화 신호 — 위 두 신호와는 별개 개념이다. detail.type:
+    // 'failed'(로컬 저장 실패, isNewPage/errorKind 포함) | 'recovered' | 'server-confirmed' | 'cleared'.
+    // 현재 상태 전체는 Storage.getHealth()로 다시 읽는다(이벤트는 "바뀌었다"는 알림일 뿐).
+    const STORAGE_HEALTH = 'kumon:storage-health';
+    function emitStorageHealth(detail) { target.dispatchEvent(new CustomEvent(STORAGE_HEALTH, { detail })); }
+    function onStorageHealth(handler) { target.addEventListener(STORAGE_HEALTH, handler); }
+    function offStorageHealth(handler) { target.removeEventListener(STORAGE_HEALTH, handler); }
+
+    return {
+      STRUCTURE_CHANGED, emitStructureChanged, isLocked, on, off, LOCK_CHANGED, emitLockChanged, onLockChanged, offLockChanged,
+      STORAGE_HEALTH, emitStorageHealth, onStorageHealth, offStorageHealth
+    };
+  })();
+
+  /* ══════════════════════════════════════════════════════════
+     2c. StorageBanner — 로컬 저장 실패 경고 배너(#kth-storage-banner)
+     모든 뷰어(나의 폴더 + 과목 + 자료실)가 공유한다: 뷰어별 HTML을 고치지 않아도 필기 저장
+     실패가 조용히 묻히지 않도록 엔진이 직접 만든다. 배너는 절대 화면을 덮지 않고 레이아웃 안에서
+     자리를 차지한다 — 모든 뷰어의 #app(세로 flex) 안, #lock-banner 바로 뒤(=상단 툴바 위)에
+     끼워 넣어서 툴바가 그만큼 아래로 밀려난다.
+     "접기"는 배너를 영구히 없애는 동작이 아니다:
+       · 뷰어가 자체 실패 표시(상태 표시줄의 붉은 "⛔ 저장 실패")를 갖고 있다고 알리면
+         (setExternalIndicator(true)) 접힌 배너는 완전히 숨겨진다 — 그 표시가 계속 남는다.
+       · 그런 표시가 없는 뷰어에서는 접어도 가는 붉은 띠("⛔ 저장 실패 — 펼치기")가 남는다.
+     접은 뒤 "새로운" 저장 실패가 생기면 다시 펼쳐진다: (1) 복구됐다가 다시 실패한 경우,
+     (2) 이번 실패 중 아직 알리지 않은 다른 페이지가 실패한 경우, (3) 접은 지 2분이 지난 뒤의
+     실패(주기적 재확인). 같은 페이지에서 필기를 계속하다 반복되는 실패마다 다시 펼치지는 않는다
+     — 필기 도중 배너가 열리고 닫히며 화면이 밀리는 것을 막기 위해서다.
+  ══════════════════════════════════════════════════════════ */
+  const StorageBanner = (function () {
+    const REMIND_MS = 2 * 60 * 1000;
+    const RECOVERED_SHOW_MS = 4000;
+    let el = null, textEl = null, btnEl = null;
+    let collapsed = false, collapsedAt = 0, externalIndicator = false, episodeActive = false, recoveredTimer = null;
+    const seenKeys = new Set(); // 이번 실패 구간에서 이미 알린 페이지(fullKey)
+
+    function place(node) {
+      const lock = document.getElementById('lock-banner');
+      if (lock && lock.parentNode) { lock.parentNode.insertBefore(node, lock.nextSibling); return; }
+      const host = document.getElementById('app') || document.body;
+      host.insertBefore(node, host.firstChild);
+    }
+    function ensureElement() {
+      if (el) return;
+      el = document.createElement('div');
+      el.id = 'kth-storage-banner';
+      el.setAttribute('role', 'alert');
+      textEl = document.createElement('span');
+      textEl.style.cssText = 'flex:1;min-width:0;';
+      btnEl = document.createElement('button');
+      btnEl.type = 'button';
+      btnEl.addEventListener('click', function () { if (collapsed) expand(); else collapse(); });
+      el.appendChild(textEl);
+      el.appendChild(btnEl);
+      place(el);
+    }
+    function styleFor(mode) {
+      const base = 'display:flex;flex-shrink:0;align-items:center;gap:10px;color:#fff;font-family:system-ui,-apple-system,"Noto Sans KR",sans-serif;';
+      if (mode === 'ok') return base + 'padding:7px 12px;background:#1b6e3a;font-size:12.5px;font-weight:600;line-height:1.45;';
+      if (mode === 'strip') return base + 'padding:2px 12px;background:#b3261e;font-size:11.5px;font-weight:700;line-height:1.5;';
+      return base + 'padding:8px 12px;background:#b3261e;font-size:12.5px;font-weight:600;line-height:1.45;';
+    }
+    function styleBtn() {
+      btnEl.style.cssText = 'flex-shrink:0;padding:4px 12px;border-radius:14px;border:1px solid rgba(255,255,255,.75);background:rgba(255,255,255,.16);color:#fff;font:inherit;font-weight:700;cursor:pointer;';
+    }
+    function messageFor(h) {
+      const head = h.errorKind === 'quota' ? '저장 공간이 부족해 이 기기에 저장하지 못했어요.' : '이 기기의 저장소를 쓸 수 없어 저장하지 못했어요.';
+      if (h.unconfirmedPages > 0) {
+        return '⚠️ ' + head + ' 서버에는 계속 저장을 시도하고 있어요 — 서버 저장이 확인되기 전에는 이 창을 닫지 마세요. (서버 미확인 ' + h.unconfirmedPages + '페이지)';
+      }
+      return '⚠️ ' + head + ' 서버에는 저장됐지만, 이 기기에서는 계속 저장되지 않아요. 저장 공간을 확보하기 전까지는 서버에 연결된 상태로 사용해주세요.';
+    }
+    function render() {
+      if (!el) return;
+      const h = Storage.getHealth();
+      if (!h.localFailing) return;
+      if (collapsed) {
+        if (externalIndicator) { el.style.cssText = 'display:none;'; return; }
+        el.style.cssText = styleFor('strip');
+        textEl.textContent = '⛔ 저장 실패 — 이 기기에 저장되지 않는 필기가 있어요';
+        btnEl.textContent = '펼치기'; styleBtn(); btnEl.style.padding = '1px 10px'; btnEl.style.fontSize = '11px';
+        return;
+      }
+      el.style.cssText = styleFor('warn');
+      textEl.textContent = messageFor(h);
+      btnEl.textContent = '접기'; styleBtn();
+    }
+    function collapse() { collapsed = true; collapsedAt = Date.now(); render(); }
+    function expand() { collapsed = false; render(); }
+    function showRecovered() {
+      ensureElement();
+      el.style.cssText = styleFor('ok');
+      textEl.textContent = '✅ 저장이 다시 정상으로 돌아왔어요.';
+      btnEl.style.display = 'none';
+      if (recoveredTimer) clearTimeout(recoveredTimer);
+      recoveredTimer = setTimeout(function () { recoveredTimer = null; if (el && !Storage.getHealth().localFailing) el.style.cssText = 'display:none;'; }, RECOVERED_SHOW_MS);
+    }
+    function handle(e) {
+      const d = (e && e.detail) || {};
+      const h = Storage.getHealth();
+      if (h.localFailing) {
+        if (recoveredTimer) { clearTimeout(recoveredTimer); recoveredTimer = null; }
+        ensureElement();
+        btnEl.style.display = '';
+        if (!episodeActive) { episodeActive = true; collapsed = false; seenKeys.clear(); }
+        else if (collapsed && d.type === 'failed') {
+          const isNewPage = !seenKeys.has(d.key), reminderDue = Date.now() - collapsedAt >= REMIND_MS;
+          if (isNewPage || reminderDue) collapsed = false;
+        }
+        if (d.type === 'failed') seenKeys.add(d.key);
+        render();
+      } else if (episodeActive) {
+        episodeActive = false; collapsed = false; seenKeys.clear();
+        if (d.type === 'recovered') showRecovered();
+        else if (el) el.style.cssText = 'display:none;'; // 저장 못 한 페이지가 삭제된 경우 등 — 조용히 닫는다(상태 표시는 이미 원래대로)
+      }
+    }
+    Events.onStorageHealth(handle);
+    return {
+      setExternalIndicator: function (v) { externalIndicator = !!v; render(); },
+      expand: expand
+    };
   })();
 
   /* ══════════════════════════════════════════════════════════
@@ -1912,7 +2189,7 @@
      공개 API
   ══════════════════════════════════════════════════════════ */
   const AnnotationEngine = {
-    Storage, Device, Events, PageOrder, Elements, Color, Ink, Tools, Page, Sync, PWA,
+    Storage, Device, Events, StorageBanner, PageOrder, Elements, Color, Ink, Tools, Page, Sync, PWA,
     genElementId, genPageId, pdfUrl,
 
     // bookId(=PDF 파일명, 확장자 제외) 전환 — 새 교재를 열 때 반드시 호출.

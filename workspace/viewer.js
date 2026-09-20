@@ -1065,8 +1065,70 @@ function clearPage() {
 async function manualSaveNow() {
   const p = panelPage();
   const btn = document.getElementById('pt-save'); btn.disabled = true;
-  try { const r = await Engine.Sync.manualSaveNow(bookId, p); showToast(r.ok ? '✅ 저장됨' : '📴 로컬에 저장됨 (서버 오프라인)'); Sync.updateSyncBadge(); }
+  try {
+    const r = await Engine.Sync.manualSaveNow(bookId, p);
+    // 이 기기의 로컬 저장이 실패한 상태에서는 "로컬에 저장됨"이라고 말하면 사실과 다르다.
+    const localFailing = Engine.Storage.getHealth().localFailing;
+    if (localFailing) showToast(r.ok ? '⚠️ 서버에는 저장했지만 이 기기에는 저장하지 못했어요' : '⛔ 저장 실패 — 이 기기에도 서버에도 저장되지 않았어요');
+    else showToast(r.ok ? '✅ 저장됨' : '📴 로컬에 저장됨 (서버 오프라인)');
+    Sync.updateSyncBadge();
+  }
   finally { btn.disabled = false; }
+}
+// ── 새로 삽입하는 이미지 압축 ─────────────────────────────────────
+// triggerImageInsert(새 삽입)에서만 쓴다 — 이미 저장된 이미지, 이미지 교체(replaceImageElement),
+// 자르기 결과는 건드리지 않는다. 압축 상한은 사진 페이지와 같은 COMPRESS_MAX_EDGE(2000px)를 쓰지만,
+// compressPhotoForPage()는 무조건 JPEG로만 다시 인코딩해서(투명 배경이 검게 변한다) 그대로
+// 재사용할 수 없어 별도 함수로 만들었다.
+// 규칙: JPEG는 긴 변이 2000px를 넘거나 1MB를 넘을 때만, PNG/WebP는 긴 변이 2000px를 넘을 때만
+// 다시 인코딩한다(PNG/WebP는 PNG로 — 배경을 채우지 않아 투명도가 그대로 유지된다). GIF(움직임)·SVG(벡터)
+// 등 그 밖의 형식은 손대지 않는다. 결과가 원본보다 작지 않으면 원본을 쓴다.
+const IMAGE_INSERT_REENCODE_MIN_BYTES = 1024 * 1024;
+function planImageReencode(type, size, nw, nh) {
+  type = (type || '').toLowerCase();
+  if (type !== 'image/jpeg' && type !== 'image/png' && type !== 'image/webp') return { attempt: false, reason: 'unsupported-type' };
+  const longEdge = Math.max(nw, nh);
+  if (!(longEdge > 0)) return { attempt: false, reason: 'no-dimensions' };
+  const needResize = longEdge > COMPRESS_MAX_EDGE;
+  const bigJpeg = type === 'image/jpeg' && size > IMAGE_INSERT_REENCODE_MIN_BYTES;
+  if (!needResize && !bigJpeg) return { attempt: false, reason: 'small-enough' };
+  const ratio = needResize ? COMPRESS_MAX_EDGE / longEdge : 1;
+  return {
+    attempt: true,
+    width: Math.max(1, Math.round(nw * ratio)), height: Math.max(1, Math.round(nh * ratio)),
+    outType: type === 'image/jpeg' ? 'image/jpeg' : 'image/png'
+  };
+}
+function loadImageFromDataUrl(dataUrl) {
+  return new Promise((resolve, reject) => { const img = new Image(); img.onload = () => resolve(img); img.onerror = () => reject(new Error('image load failed')); img.src = dataUrl; });
+}
+function approxDataUrlBytes(dataUrl) { const i = dataUrl.indexOf(','); return Math.floor((dataUrl.length - i - 1) * 3 / 4); }
+function fmtImageSize(n) { return n >= 1024 * 1024 ? (n / 1024 / 1024).toFixed(1) + 'MB' : Math.max(1, Math.round(n / 1024)) + 'KB'; }
+// status: 'compressed'(줄였음) | 'original'(줄일 필요가 없거나 줄여도 작아지지 않아 원본 사용) | 'failed'(압축 실패 → 원본 사용)
+async function compressImageForInsert(file) {
+  const origSize = file.size || 0;
+  const origDataUrl = await readFileAsDataUrl(file); // 파일 읽기 자체가 실패하면 예외 → 호출부가 "이미지를 불러오지 못했어요"
+  const original = (status, w, h) => ({ dataUrl: origDataUrl, width: w, height: h, status, origSize, newSize: origSize });
+  let img = null;
+  try { img = await loadImageFromDataUrl(origDataUrl); }
+  catch (e) { return original('failed', 240, 180); } // 예전과 같은 대체 크기로 원본 삽입(브라우저가 못 읽는 형식 등)
+  const nw = img.naturalWidth || 240, nh = img.naturalHeight || 180;
+  const plan = planImageReencode(file.type, origSize, nw, nh);
+  if (!plan.attempt) return original('original', nw, nh);
+  try {
+    const canvas = document.createElement('canvas'); canvas.width = plan.width; canvas.height = plan.height;
+    const ctx = canvas.getContext('2d');
+    ctx.imageSmoothingQuality = 'high';
+    ctx.drawImage(img, 0, 0, plan.width, plan.height); // 배경을 채우지 않는다 — 투명 PNG의 알파가 유지된다
+    const out = plan.outType === 'image/jpeg' ? canvas.toDataURL('image/jpeg', 0.85) : canvas.toDataURL('image/png');
+    if (!out || !out.startsWith('data:image/')) throw new Error('image encode failed');
+    const newSize = approxDataUrlBytes(out);
+    if (newSize >= origSize) return original('original', nw, nh);
+    return { dataUrl: out, width: plan.width, height: plan.height, status: 'compressed', origSize, newSize };
+  } catch (e) {
+    console.warn('[viewer] 이미지 압축 실패 — 원본을 삽입합니다', e);
+    return original('failed', nw, nh);
+  }
 }
 function triggerImageInsert() {
   if (!Engine.Tools.isPenMode()) { showToast('먼저 ✏️ 필기 모드를 켜주세요'); return; }
@@ -1077,16 +1139,17 @@ function triggerImageInsert() {
   input.onchange = async () => {
     const file = input.files && input.files[0]; if (!file) return;
     try {
-      const dataUrl = await readFileAsDataUrl(file);
-      const dims = await new Promise(resolve => { const img = new Image(); img.onload = () => resolve({ w: img.naturalWidth || 240, h: img.naturalHeight || 180 }); img.onerror = () => resolve({ w: 240, h: 180 }); img.src = dataUrl; });
-      const MAX = 240; let w = dims.w, h = dims.h;
+      const img = await compressImageForInsert(file);
+      const MAX = 240; let w = img.width, h = img.height;
       if (w > MAX || h > MAX) { const r = Math.min(MAX / w, MAX / h); w = Math.round(w * r); h = Math.round(h * r); }
       const size1 = Engine.Page.getPageSize1(p);
       const x = Math.max(0, (size1.w - w) / 2), y = Math.max(0, (size1.h - h) / 2);
       setActiveInkPage(p);
-      Engine.Elements.addElement(p, layerId, { type: 'image', src: dataUrl, x, y, width: w, height: h });
+      Engine.Elements.addElement(p, layerId, { type: 'image', src: img.dataUrl, x, y, width: w, height: h });
       Engine.Page.redrawPage(p);
-      showToast('이미지를 삽입했어요 — 드래그로 이동, 모서리로 크기 조절');
+      if (img.status === 'failed') showToast('이미지를 삽입했어요 — 압축에 실패해 원본 그대로 넣었어요');
+      else if (img.status === 'compressed') showToast('이미지를 삽입했어요 (' + fmtImageSize(img.origSize) + ' → ' + fmtImageSize(img.newSize) + '로 줄였어요) — 드래그로 이동, 모서리로 크기 조절');
+      else showToast('이미지를 삽입했어요 — 드래그로 이동, 모서리로 크기 조절');
     } catch (e) { showToast('이미지를 불러오지 못했어요'); }
   };
   input.click();
@@ -1733,6 +1796,15 @@ const Sync = (function () {
   }
   function updateSyncBadge() {
     const el = document.getElementById('sb-sync');
+    // 이 기기의 로컬 저장이 실패한 동안은 "저장됨"으로 돌아가지 않는다 — 30초마다 도는
+    // checkServerHealth()가 이 함수를 다시 불러도 실패 표시가 유지되도록 상태를 여기서 직접 본다.
+    const health = Engine.Storage.getHealth();
+    if (health.localFailing) {
+      el.textContent = '⛔ 저장 실패'; el.className = 'sb-sync failed';
+      el.title = (health.unconfirmedPages > 0 ? '이 기기에 저장하지 못했어요 — 서버 저장을 시도 중이에요' : '이 기기에는 저장하지 못했지만 서버에는 저장됐어요') + ' (눌러서 자세히 보기)';
+      return;
+    }
+    el.title = '';
     if (!Engine.PWA.isServerOnline()) { el.textContent = '📴 오프라인(로컬 저장만)'; el.className = 'sb-sync offline'; }
     else { el.textContent = '✅ 저장됨'; el.className = 'sb-sync saved'; }
   }
@@ -1797,6 +1869,67 @@ async function checkServerHealth() {
   document.getElementById('sl-text').textContent = online ? '서버 연결됨 · ' + Engine.Device.getLabel() : '오프라인 모드 · 캐시된 자료';
   document.getElementById('offline-banner').classList.toggle('show', !online);
   Sync.updateSyncBadge();
+  refreshStorageUsage(); // 30초마다 저장 사용량 표시도 함께 갱신한다
+}
+
+/* ══ 저장 상태/사용량 표시 ═══════════════════════════════════
+   엔진(shared/annotation-engine.js)의 Storage.getHealth()/getUsage()를 읽기만 한다 — 저장소를
+   직접 만지지 않고, 삭제 기능도 없다. 사용량의 한도는 브라우저마다 달라 "약 5MB"로 가정한 추정치다. */
+function fmtStorageSize(n) { return n >= 1024 * 1024 ? (n / 1024 / 1024).toFixed(1) + 'MB' : Math.round(n / 1024) + 'KB'; }
+function refreshStorageUsage() {
+  const el = document.getElementById('sb-usage');
+  if (!el) return;
+  const u = Engine.Storage.getUsage();
+  el.textContent = '저장 공간 ' + fmtStorageSize(u.total) + ' / 약 ' + fmtStorageSize(u.limit) + ' (추정)';
+  el.classList.toggle('danger', u.ratio >= 0.95);
+  el.classList.toggle('warn', u.ratio >= 0.8 && u.ratio < 0.95);
+  el.title = usageBreakdownLines(u).join('\n');
+  if (document.getElementById('storage-usage-pop').classList.contains('open')) renderStorageUsagePop(u);
+}
+function usageBreakdownLines(u) {
+  const row = (label, p) => label + ': ' + fmtStorageSize(p.size) + ' (' + p.count + '개)';
+  return [
+    '필기 레이어(ann:layer:*) — ' + row('사용량', u.parts.layer),
+    '백업(ann:backup:*) — ' + row('사용량', u.parts.backup),
+    '페이지 순서(ann:pageorder:*) — ' + row('사용량', u.parts.pageOrder),
+    '그 밖의 앱 설정(ann:*) — ' + row('사용량', u.parts.otherAnn),
+    '그 외 — ' + row('사용량', u.parts.other),
+    '합계 ' + fmtStorageSize(u.total) + ' / 약 ' + fmtStorageSize(u.limit) + ' (' + Math.round(u.ratio * 100) + '%, 추정)'
+  ];
+}
+function renderStorageUsagePop(u) {
+  const pop = document.getElementById('storage-usage-pop');
+  pop.innerHTML = '';
+  const add = (cls, text) => { const d = document.createElement('div'); d.className = cls; d.textContent = text; pop.appendChild(d); return d; };
+  const addRow = (label, p) => {
+    const d = document.createElement('div'); d.className = 'sup-row';
+    const a = document.createElement('span'); a.textContent = label;
+    const b = document.createElement('span'); b.textContent = fmtStorageSize(p.size) + ' · ' + p.count + '개';
+    d.appendChild(a); d.appendChild(b); pop.appendChild(d);
+  };
+  add('sup-title', '이 기기의 필기 저장 공간 (추정)');
+  addRow('필기 레이어 (ann:layer:*)', u.parts.layer);
+  addRow('백업 (ann:backup:*)', u.parts.backup);
+  addRow('페이지 순서 (ann:pageorder:*)', u.parts.pageOrder);
+  addRow('그 밖의 앱 설정 (ann:*)', u.parts.otherAnn);
+  addRow('그 외', u.parts.other);
+  addRow('합계 (' + Math.round(u.ratio * 100) + '%)', { size: u.total, count: u.parts.layer.count + u.parts.backup.count + u.parts.pageOrder.count + u.parts.otherAnn.count + u.parts.other.count });
+  add('sup-note', '글자 수 기준의 추정치예요. 한도는 브라우저마다 달라 약 5MB로 가정했어요. 이 화면에서는 아무것도 삭제하지 않아요.');
+}
+function toggleStorageUsagePop() {
+  const pop = document.getElementById('storage-usage-pop');
+  if (pop.classList.contains('open')) { pop.classList.remove('open'); return; }
+  renderStorageUsagePop(Engine.Storage.getUsage(true));
+  pop.classList.add('open');
+}
+function closeStorageUsagePop() { document.getElementById('storage-usage-pop').classList.remove('open'); }
+function initStorageStatus() {
+  // 엔진의 경고 배너를 접으면(배너를 없애는 게 아니라 접기만) 상태 표시줄의 붉은 "⛔ 저장 실패"가 남는다.
+  Engine.StorageBanner.setExternalIndicator(true);
+  Engine.Events.onStorageHealth(() => { Sync.updateSyncBadge(); refreshStorageUsage(); });
+  document.getElementById('sb-sync').addEventListener('click', () => { if (Engine.Storage.getHealth().localFailing) Engine.StorageBanner.expand(); });
+  document.addEventListener('click', e => { if (!e.target.closest('#storage-usage-pop') && !e.target.closest('#sb-usage')) closeStorageUsagePop(); });
+  refreshStorageUsage();
 }
 // 이 뷰어에는 📥 전체 오프라인 저장 버튼이 없다 — subjects/archives는 큰 PDF
 // 원본을 미리 받아두는 의미가 있지만, "나의 폴더" 책은 PDF가 없고 필기/페이지
@@ -1858,6 +1991,7 @@ document.addEventListener('DOMContentLoaded', () => {
   initSpectrumEvents();
   initWheelPageNav();
   Engine.Events.on(handleStructureChanged);
+  initStorageStatus();
   makeDialogDraggable('te-box', 'te-drag-handle');
   makeDialogDraggable('ie-box', 'ie-drag-handle');
   Engine.PWA.registerServiceWorker('../sw.js', {}); // 앱 셸만 SW가 자동 캐싱
