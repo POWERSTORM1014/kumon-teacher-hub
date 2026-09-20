@@ -1068,7 +1068,7 @@ async function manualSaveNow() {
   try {
     const r = await Engine.Sync.manualSaveNow(bookId, p);
     // 이 기기의 로컬 저장이 실패한 상태에서는 "로컬에 저장됨"이라고 말하면 사실과 다르다.
-    const localFailing = Engine.Storage.getHealth().localFailing;
+    const localFailing = safeStorageHealth().localFailing;
     if (localFailing) showToast(r.ok ? '⚠️ 서버에는 저장했지만 이 기기에는 저장하지 못했어요' : '⛔ 저장 실패 — 이 기기에도 서버에도 저장되지 않았어요');
     else showToast(r.ok ? '✅ 저장됨' : '📴 로컬에 저장됨 (서버 오프라인)');
     Sync.updateSyncBadge();
@@ -1798,7 +1798,7 @@ const Sync = (function () {
     const el = document.getElementById('sb-sync');
     // 이 기기의 로컬 저장이 실패한 동안은 "저장됨"으로 돌아가지 않는다 — 30초마다 도는
     // checkServerHealth()가 이 함수를 다시 불러도 실패 표시가 유지되도록 상태를 여기서 직접 본다.
-    const health = Engine.Storage.getHealth();
+    const health = safeStorageHealth();
     if (health.localFailing) {
       el.textContent = '⛔ 저장 실패'; el.className = 'sb-sync failed';
       el.title = (health.unconfirmedPages > 0 ? '이 기기에 저장하지 못했어요 — 서버 저장을 시도 중이에요' : '이 기기에는 저장하지 못했지만 서버에는 저장됐어요') + ' (눌러서 자세히 보기)';
@@ -1872,6 +1872,55 @@ async function checkServerHealth() {
   refreshStorageUsage(); // 30초마다 저장 사용량 표시도 함께 갱신한다
 }
 
+/* ══ 엔진 새 기능 확인 방어 ═══════════════════════════════════
+   배포 직후에는 브라우저/CDN 임시 보관 때문에 "새 화면 파일 + 옛 엔진(shared/annotation-engine.js)"이
+   섞여 올 수 있다. 옛 엔진에는 저장 상태 API(Storage.getHealth/getUsage, StorageBanner,
+   Events.onStorageHealth)가 없어서, 그대로 부르면 오류가 나고 DOMContentLoaded 핸들러가 거기서 멈춰
+   책 열기(initFromUrl)까지 실행되지 않는다. 그래서 이 API는 항상 아래 함수로만 부른다 — 없으면 조용히
+   "정상 상태/사용량 없음"으로 취급하고, 책은 그대로 열리며 짧은 안내만 띄운다. 안내 띠는 엔진의
+   StorageBanner에 의존하지 않는다(엔진이 옛것이면 그게 없기 때문이다). */
+let engineStorageFeaturesCache = null;
+function engineHasStorageFeatures() {
+  if (engineStorageFeaturesCache !== null) return engineStorageFeaturesCache;
+  try {
+    engineStorageFeaturesCache = !!(Engine.Storage && typeof Engine.Storage.getHealth === 'function' && typeof Engine.Storage.getUsage === 'function'
+      && Engine.StorageBanner && typeof Engine.StorageBanner.setExternalIndicator === 'function' && typeof Engine.StorageBanner.expand === 'function'
+      && Engine.Events && typeof Engine.Events.onStorageHealth === 'function');
+  } catch (e) { engineStorageFeaturesCache = false; }
+  return engineStorageFeaturesCache;
+}
+const NO_STORAGE_PROBLEM = { localFailing: false, unsavedPages: 0, unconfirmedPages: 0, errorKind: 'other' };
+function safeStorageHealth() {
+  if (engineHasStorageFeatures()) { try { return Engine.Storage.getHealth(); } catch (e) { /* 아래 기본값 */ } }
+  return NO_STORAGE_PROBLEM;
+}
+function safeStorageUsage(force) {
+  if (engineHasStorageFeatures()) { try { return Engine.Storage.getUsage(force); } catch (e) { /* 아래 null */ } }
+  return null;
+}
+// 툴바를 가리지 않는 얇은 띠 — #lock-banner 바로 뒤(=툴바 위)에 레이아웃 안에서 자리를 차지하고, 없으면
+// #app 맨 앞에 넣는다. 닫으면 이 페이지에서는 다시 나오지 않는다(새로고침하면 엔진이 새것일 때 사라진다).
+function showEngineOutdatedNotice() {
+  try {
+    if (document.getElementById('kth-engine-notice')) return;
+    const bar = document.createElement('div');
+    bar.id = 'kth-engine-notice';
+    bar.setAttribute('role', 'status');
+    bar.style.cssText = 'display:flex;flex-shrink:0;align-items:center;gap:10px;padding:4px 12px;background:#3a3226;color:#f0c48a;font-size:12px;line-height:1.5;';
+    const text = document.createElement('span');
+    text.style.cssText = 'flex:1;min-width:0;';
+    text.textContent = '새 버전을 받는 중이에요. 잠시 후 새로고침해 주세요';
+    const close = document.createElement('button');
+    close.type = 'button'; close.textContent = '닫기';
+    close.style.cssText = 'flex-shrink:0;padding:1px 10px;border-radius:12px;border:1px solid rgba(240,196,138,.7);background:transparent;color:#f0c48a;font:inherit;cursor:pointer;';
+    close.addEventListener('click', () => bar.remove());
+    bar.appendChild(text); bar.appendChild(close);
+    const lock = document.getElementById('lock-banner');
+    if (lock && lock.parentNode) lock.parentNode.insertBefore(bar, lock.nextSibling);
+    else { const host = document.getElementById('app') || document.body; host.insertBefore(bar, host.firstChild); }
+  } catch (e) { console.warn('[viewer] 안내 띠를 만들지 못했어요', e); }
+}
+
 /* ══ 저장 상태/사용량 표시 ═══════════════════════════════════
    엔진(shared/annotation-engine.js)의 Storage.getHealth()/getUsage()를 읽기만 한다 — 저장소를
    직접 만지지 않고, 삭제 기능도 없다. 사용량의 한도는 브라우저마다 달라 "약 5MB"로 가정한 추정치다. */
@@ -1879,12 +1928,15 @@ function fmtStorageSize(n) { return n >= 1024 * 1024 ? (n / 1024 / 1024).toFixed
 function refreshStorageUsage() {
   const el = document.getElementById('sb-usage');
   if (!el) return;
-  const u = Engine.Storage.getUsage();
+  const u = safeStorageUsage();
+  if (!u) { el.style.display = 'none'; return; } // 옛 엔진 — 사용량을 셀 수 없으니 숨긴다
+  el.style.display = '';
   el.textContent = '저장 공간 ' + fmtStorageSize(u.total) + ' / 약 ' + fmtStorageSize(u.limit) + ' (추정)';
   el.classList.toggle('danger', u.ratio >= 0.95);
   el.classList.toggle('warn', u.ratio >= 0.8 && u.ratio < 0.95);
   el.title = usageBreakdownLines(u).join('\n');
-  if (document.getElementById('storage-usage-pop').classList.contains('open')) renderStorageUsagePop(u);
+  const pop = document.getElementById('storage-usage-pop');
+  if (pop && pop.classList.contains('open')) renderStorageUsagePop(u);
 }
 function usageBreakdownLines(u) {
   const row = (label, p) => label + ': ' + fmtStorageSize(p.size) + ' (' + p.count + '개)';
@@ -1899,6 +1951,7 @@ function usageBreakdownLines(u) {
 }
 function renderStorageUsagePop(u) {
   const pop = document.getElementById('storage-usage-pop');
+  if (!pop || !u) return;
   pop.innerHTML = '';
   const add = (cls, text) => { const d = document.createElement('div'); d.className = cls; d.textContent = text; pop.appendChild(d); return d; };
   const addRow = (label, p) => {
@@ -1918,16 +1971,22 @@ function renderStorageUsagePop(u) {
 }
 function toggleStorageUsagePop() {
   const pop = document.getElementById('storage-usage-pop');
+  if (!pop) return;
   if (pop.classList.contains('open')) { pop.classList.remove('open'); return; }
-  renderStorageUsagePop(Engine.Storage.getUsage(true));
+  const u = safeStorageUsage(true);
+  if (!u) return; // 옛 엔진 — 보여줄 사용량이 없다
+  renderStorageUsagePop(u);
   pop.classList.add('open');
 }
-function closeStorageUsagePop() { document.getElementById('storage-usage-pop').classList.remove('open'); }
+function closeStorageUsagePop() { const pop = document.getElementById('storage-usage-pop'); if (pop) pop.classList.remove('open'); }
 function initStorageStatus() {
+  // 엔진이 옛 버전이면(새 화면 파일과 옛 엔진이 섞여 온 경우) 저장 상태 기능은 건너뛰고 안내만 띄운다 — 책 열기는 막지 않는다.
+  if (!engineHasStorageFeatures()) { showEngineOutdatedNotice(); refreshStorageUsage(); return; }
   // 엔진의 경고 배너를 접으면(배너를 없애는 게 아니라 접기만) 상태 표시줄의 붉은 "⛔ 저장 실패"가 남는다.
   Engine.StorageBanner.setExternalIndicator(true);
   Engine.Events.onStorageHealth(() => { Sync.updateSyncBadge(); refreshStorageUsage(); });
-  document.getElementById('sb-sync').addEventListener('click', () => { if (Engine.Storage.getHealth().localFailing) Engine.StorageBanner.expand(); });
+  const syncEl = document.getElementById('sb-sync');
+  if (syncEl) syncEl.addEventListener('click', () => { if (safeStorageHealth().localFailing) Engine.StorageBanner.expand(); });
   document.addEventListener('click', e => { if (!e.target.closest('#storage-usage-pop') && !e.target.closest('#sb-usage')) closeStorageUsagePop(); });
   refreshStorageUsage();
 }
@@ -1991,7 +2050,8 @@ document.addEventListener('DOMContentLoaded', () => {
   initSpectrumEvents();
   initWheelPageNav();
   Engine.Events.on(handleStructureChanged);
-  initStorageStatus();
+  // 저장 상태 표시 초기화가 어떤 이유로든 실패해도 그 뒤의 책 열기(initFromUrl 등)는 반드시 실행돼야 한다.
+  try { initStorageStatus(); } catch (e) { console.warn('[viewer] 저장 상태 표시를 초기화하지 못했어요 — 책 열기는 계속합니다', e); }
   makeDialogDraggable('te-box', 'te-drag-handle');
   makeDialogDraggable('ie-box', 'ie-drag-handle');
   Engine.PWA.registerServiceWorker('../sw.js', {}); // 앱 셸만 SW가 자동 캐싱

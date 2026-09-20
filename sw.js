@@ -23,7 +23,7 @@
 // SHELL_CACHE/CONTENT_CACHE가 아닌 캐시를 전부 지우므로, 번호를 올리면 옛 SHELL_CACHE가
 // 자동으로 삭제되고 새 코드가 다시 캐싱된다. 번호를 안 올리면 배포해도 사용자 브라우저에
 // 옛 코드가 계속 남을 수 있다.
-const SW_VERSION = 'v15';
+const SW_VERSION = 'v16';
 const SHELL_CACHE = 'kth-shell-' + SW_VERSION;
 // CONTENT_CACHE는 SW_VERSION과 별개로 관리한다 — 교재 PDF/오프라인 저장본이 들어있어서,
 // 앱 셸 코드만 바뀐 배포마다 같이 버전을 올리면 사용자가 이미 받아둔 대용량 PDF까지
@@ -46,10 +46,36 @@ const SHELL_URLS = [
   'https://cdnjs.cloudflare.com/ajax/libs/jspdf/4.2.1/jspdf.umd.min.js',
 ];
 
+// ── 브라우저 임시 보관본(HTTP 캐시) 우회 ────────────────────────────────
+// GitHub Pages는 모든 파일에 Cache-Control: max-age=600(10분)을 붙여 내보낸다. 요청 방식을 지정하지
+// 않으면(기본값) 브라우저는 10분 안에 받아둔 파일을 서버에 물어보지도 않고 그대로 내준다 — 그러면
+//   · 배포 직전에 받아둔 옛 엔진이 새 버전 캐시(kth-shell-vNN)에 그대로 저장되고,
+//   · 평소 요청(네트워크 우선)도 최대 10분간 옛 파일을 받아, 새 화면 파일과 옛 엔진이 섞여 온다.
+// 그래서 같은 사이트 파일(우리가 배포하는 파일)만 임시 보관본을 우회한다:
+//   · 설치 단계 사전 캐시: 'reload' — 항상 서버에서 새로 받는다. 대상이 5개 파일 합쳐 약 150KB라
+//     통째로 다시 받아도 부담이 없고, 검증 정보(ETag)에 기대지 않아 가장 확실하다.
+//   · 평소 요청: 'no-cache' — 서버에 "바뀌었나요?"만 확인하고(304) 같으면 보관본을 쓴다. 요청이 많아서
+//     매번 통째로 받는 'reload'보다 가볍고 최신성은 같다. 사용자가 강력 새로고침으로 이미
+//     'reload'/'no-store'를 지정한 요청은 그 방식을 그대로 존중한다(default일 때만 no-cache로 바꾼다).
+// 외부 주소(cdnjs·구글 폰트)는 건드리지 않는다 — URL에 버전이 박혀 있어 내용이 바뀌지 않고(immutable),
+// 합쳐 약 1.8MB라 서비스 워커가 갱신될 때마다 다시 받으면 낭비다. R2(사진·PDF) 요청, Range 요청,
+// /api/ 요청은 아래 fetch 핸들러/handleCrossOrigin이 지금까지와 똑같이 처리한다.
+// 주의: GitHub Pages 앞단 CDN이 옛 파일을 잠시 들고 있는 경우는 클라이언트가 우회할 수 없다 —
+// 배포 뒤 최대 10분 정도는 앱을 열지 않는 것이 여전히 안전하다.
+function shellRequest(url) {
+  const abs = new URL(url, self.location.href);
+  return abs.origin === self.location.origin ? new Request(abs.href, { cache: 'reload' }) : url;
+}
+function networkInit(req) {
+  const init = { signal: AbortSignal.timeout(4000) };
+  if (req.cache === 'default') init.cache = 'no-cache';
+  return init;
+}
+
 self.addEventListener('install', event => {
   event.waitUntil(
     caches.open(SHELL_CACHE).then(cache =>
-      Promise.all(SHELL_URLS.map(url => cache.add(url).catch(e => console.warn('[sw] 앱쉘 캐시 실패', url, e))))
+      Promise.all(SHELL_URLS.map(url => cache.add(shellRequest(url)).catch(e => console.warn('[sw] 앱쉘 캐시 실패', url, e))))
     ).then(() => self.skipWaiting())
   );
 });
@@ -75,7 +101,7 @@ self.addEventListener('fetch', event => {
 
 async function handleNavigate(req) {
   try {
-    const res = await fetch(req, { signal: AbortSignal.timeout(4000) });
+    const res = await fetch(req, networkInit(req));
     if (res && res.ok) { const cache = await caches.open(SHELL_CACHE); cache.put(req, res.clone()); }
     return res;
   } catch (e) {
@@ -91,7 +117,7 @@ async function handleFetch(req) {
   const sameOrigin = new URL(req.url).origin === self.location.origin;
   if (!sameOrigin) return handleCrossOrigin(req);
   try {
-    const res = await fetch(req, { signal: AbortSignal.timeout(4000) });
+    const res = await fetch(req, networkInit(req));
     if (res && res.ok) {
       const cacheName = isContentUrl(req.url) ? CONTENT_CACHE : SHELL_CACHE;
       const cache = await caches.open(cacheName);
