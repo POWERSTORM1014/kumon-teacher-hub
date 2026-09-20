@@ -23,7 +23,7 @@
 // SHELL_CACHE/CONTENT_CACHE가 아닌 캐시를 전부 지우므로, 번호를 올리면 옛 SHELL_CACHE가
 // 자동으로 삭제되고 새 코드가 다시 캐싱된다. 번호를 안 올리면 배포해도 사용자 브라우저에
 // 옛 코드가 계속 남을 수 있다.
-const SW_VERSION = 'v12';
+const SW_VERSION = 'v13';
 const SHELL_CACHE = 'kth-shell-' + SW_VERSION;
 // CONTENT_CACHE는 SW_VERSION과 별개로 관리한다 — 교재 PDF/오프라인 저장본이 들어있어서,
 // 앱 셸 코드만 바뀐 배포마다 같이 버전을 올리면 사용자가 이미 받아둔 대용량 PDF까지
@@ -89,13 +89,7 @@ async function handleNavigate(req) {
 
 async function handleFetch(req) {
   const sameOrigin = new URL(req.url).origin === self.location.origin;
-  if (!sameOrigin) {
-    const cached = await caches.match(req, { ignoreVary: true });
-    if (cached) return cached;
-    const res = await fetch(req);
-    if (res && (res.ok || res.type === 'opaque')) { const cache = await caches.open(SHELL_CACHE); cache.put(req, res.clone()); }
-    return res;
-  }
+  if (!sameOrigin) return handleCrossOrigin(req);
   try {
     const res = await fetch(req, { signal: AbortSignal.timeout(4000) });
     if (res && res.ok) {
@@ -108,6 +102,46 @@ async function handleFetch(req) {
     const cached = await caches.match(req, { ignoreVary: true });
     if (cached) return cached;
     throw e;
+  }
+}
+
+// 외부 오리진(R2 사진/삽입 이미지, 구글 폰트, CDN 스크립트 등) 처리 — 항상 CORS
+// 모드로 직접 fetch해서, 캐시에는 "불투명(opaque)하지 않은" 완전한 응답만 남긴다.
+//
+// 예전에는 가로챈 요청(req)을 그대로 fetch()에 넘겼는데, 페이지의 <img src="...">가
+// crossorigin 속성 없이 사진을 표시할 때는 그 요청 자체가 원래 no-cors 모드라
+// 응답이 무조건 "불투명"으로 캐시됐다. 나중에 PDF 내보내기가 같은 URL을
+// crossOrigin='anonymous'(cors 모드)로 다시 요청하면, 캐시에 있던 그 불투명
+// 응답을 그대로 돌려주게 되는데 — 브라우저는 "cors 요청에 no-cors(불투명) 응답을
+// 쓸 수 없다"며 net::ERR_FAILED로 거부한다(콘솔의 "opaque response was used for
+// a request whose type is not no-cors" 메시지가 바로 이 상황).
+//
+// FetchEvent.respondWith()는 원래 요청이 어떤 모드였든 상관없이 어떤 Response를
+// 돌려줘도 되므로, 실제 네트워크 요청은 항상 { mode: 'cors' }로 직접 만들어서
+// 보내고, 그 완전한 응답을 캐시에 넣어둔 뒤 그대로 돌려준다 — 화면 표시(<img>,
+// crossorigin 없음)든 PDF 내보내기(crossOrigin='anonymous')든 이후로는 항상 같은
+// "완전한" 캐시 응답을 받는다. R2(pub-....r2.dev)는 이미 실제로
+// Access-Control-Allow-Origin: * 를 내려주는 것을 curl로 확인했고, 구글 폰트·
+// cdnjs도 원래 크로스오리진 임베드를 전제로 CORS를 지원하는 서비스라 안전하다.
+async function handleCrossOrigin(req) {
+  const cached = await caches.match(req, { ignoreVary: true });
+  if (cached && cached.type !== 'opaque') return cached; // 예전에 남은 불투명 캐시는 재사용하지 않고 새로 받는다
+  try {
+    const res = await fetch(new Request(req.url, { mode: 'cors' }));
+    if (res && res.ok) {
+      const cache = await caches.open(SHELL_CACHE);
+      cache.put(req, res.clone()); // 캐시 키는 원래 요청(req) 그대로 — 요청 모드와 무관하게 URL로 찾아진다
+      return res;
+    }
+    throw new Error('cors fetch not ok: ' + (res && res.status));
+  } catch (e) {
+    // CORS 헤더를 안 보내는 예외적인 리소스(다른 경로/리다이렉트 등)에 한해서만
+    // 원래 요청 그대로 폴백한다 — 화면 표시는 계속되게 하되, 이 경우 응답은
+    // 여전히 불투명이라 PDF 내보내기용으로는 못 쓴다(예외 상황이라 감수).
+    if (cached) return cached;
+    const res = await fetch(req);
+    if (res && (res.ok || res.type === 'opaque')) { const cache = await caches.open(SHELL_CACHE); cache.put(req, res.clone()); }
+    return res;
   }
 }
 
