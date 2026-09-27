@@ -23,7 +23,7 @@
 // SHELL_CACHE/CONTENT_CACHE가 아닌 캐시를 전부 지우므로, 번호를 올리면 옛 SHELL_CACHE가
 // 자동으로 삭제되고 새 코드가 다시 캐싱된다. 번호를 안 올리면 배포해도 사용자 브라우저에
 // 옛 코드가 계속 남을 수 있다.
-const SW_VERSION = 'v18';
+const SW_VERSION = 'v19';
 const SHELL_CACHE = 'kth-shell-' + SW_VERSION;
 // CONTENT_CACHE는 SW_VERSION과 별개로 관리한다 — 교재 PDF/오프라인 저장본이 들어있어서,
 // 앱 셸 코드만 바뀐 배포마다 같이 버전을 올리면 사용자가 이미 받아둔 대용량 PDF까지
@@ -93,6 +93,9 @@ self.addEventListener('fetch', event => {
   if (req.method !== 'GET') return; // 필기 저장(POST /api/layers/...)은 손대지 않는다
   const url = new URL(req.url);
   if (url.pathname.includes('/api/')) return; // 동기화 API는 항상 네트워크 직행 — 서버 온/오프라인 판정용
+  // 캡처 진행 현황(progress/)은 오프라인 캐시에서 뺀다 — 옛 화면이 남으면 안 되고, 데이터도
+  // 패스프레이즈가 필요한 API에서만 오므로 오프라인으로 열 이유가 없다. 항상 네트워크로 흘려보낸다.
+  if (url.origin === self.location.origin && url.pathname.includes('/progress/')) return;
   if (req.headers.has('range')) return; // 부분 요청은 캐시 조회/저장 없이 그대로 네트워크로 흘려보낸다
 
   if (req.mode === 'navigate') { event.respondWith(handleNavigate(req)); return; }

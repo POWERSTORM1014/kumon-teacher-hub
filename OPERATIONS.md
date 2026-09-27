@@ -17,6 +17,12 @@
 - `lock:` (편집 잠금, 동시 편집 방지용) — `expirationTtl: 300`(5분) 적용. 애플리케이션
   레벨에서도 5분 지난 잠금은 만료로 취급하지만, KV 자체 TTL도 같이 걸어야 release가
   한 번도 안 온(탭 비정상 종료 등) 죽은 잠금 키가 KV에 영원히 쌓이지 않는다.
+- `capture-progress:latest` (교재 캡처 진행 현황, `D:\kumon-page-edit\progress-data.json` 통째) —
+  **TTL 없음.** 다음 업로드 때 덮어쓰는 단일 키라 쌓이지 않는다. Worker 코드는 이 키를 읽기만
+  하고(`GET /api/capture-progress`, 헤더 `X-Capture-Passphrase`가 Worker secret
+  `CAPTURE_PASSPHRASE`와 같아야 함), 쓰기는 로컬 `D:\kumon-page-edit\upload_progress.py`가
+  `wrangler kv key put --remote`로 직접 한다(공개 쓰기 라우트 없음). 업로드 1회 = KV 쓰기 1회.
+  패스프레이즈 변경: `cd worker && npx wrangler secret put CAPTURE_PASSPHRASE`(재배포 불필요).
 - 새로 KV에 쓰는 코드를 추가할 때는 이 표에 맞춰 TTL 여부를 먼저 결정하고 시작할 것.
 
 ## bookId 명명 규칙 (과목 + 자료실 공통)

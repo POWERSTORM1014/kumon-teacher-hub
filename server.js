@@ -58,6 +58,30 @@ app.get('/api/ping', (req, res) => {
   res.json({ ok: true, time: new Date().toISOString() });
 });
 
+// 캡처 진행 현황 — Worker의 GET /api/capture-progress(KV capture-progress:latest)와 같은 라우트/응답.
+// 로컬에서는 CAPTURE_PROGRESS_FILE(기본 data/capture-progress.json)을 읽고, 패스프레이즈는
+// 환경변수 CAPTURE_PASSPHRASE로 받는다(없으면 Worker와 똑같이 503).
+const CAPTURE_PROGRESS_FILE = process.env.CAPTURE_PROGRESS_FILE || path.join(ROOT, 'data', 'capture-progress.json');
+function passphraseMatches(given, expected) {
+  if (typeof given !== 'string' || typeof expected !== 'string' || !expected) return false;
+  const a = crypto.createHash('sha256').update(given).digest();
+  const b = crypto.createHash('sha256').update(expected).digest();
+  return crypto.timingSafeEqual(a, b);
+}
+app.get('/api/capture-progress', async (req, res) => {
+  const expected = process.env.CAPTURE_PASSPHRASE;
+  if (!expected) return res.status(503).json({ error: 'passphrase not configured' });
+  if (!passphraseMatches(req.get('X-Capture-Passphrase'), expected)) return res.status(401).json({ error: 'unauthorized' });
+  try {
+    const raw = await fsp.readFile(CAPTURE_PROGRESS_FILE, 'utf8');
+    res.set('Cache-Control', 'no-store').type('application/json').send(raw);
+  } catch (e) {
+    if (e.code === 'ENOENT') return res.json({ found: false });
+    console.error('[capture-progress:get]', e);
+    res.status(500).json({ error: 'read failed' });
+  }
+});
+
 app.get('/api/layers/:pageId', async (req, res) => {
   const { pageId } = req.params;
   if (!isSafeKey(pageId)) return res.status(400).json({ error: 'invalid pageId' });

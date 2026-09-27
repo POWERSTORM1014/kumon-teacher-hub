@@ -28,4 +28,7 @@
   `workspace:books`) 기반 동적 데이터라는 점만 다르고, 책 안의 실제 페이지 구성은
   전부 기존 "페이지 삽입" 기능(빈 페이지/줄노트/모눈 + 이번에 추가한 사진)을 그대로
   쓴다. `workspace/folder.html`(폴더 안 책 목록) → `workspace/viewer.html`(뷰어,
-  `?book=<id>`) 순서로 이동한다. 데이터 구조/연쇄 삭제 범위는 [OPERATIONS.md](./OPERATIONS.md) 참고.
+  `?book=<id>`) 순서로 이동한다. 데이터 구조/연쇄 삭제 범위는 [OPERATIONS.md](./OPERATIONS.md) 참고.- `progress/index.html` — "캡처 진행 현황"(교재 캡처 작업 진행률). 데이터는 로컬
+  `D:\kumon-page-edit\progress-data.json`을 `upload_progress.py`가 KV `capture-progress:latest`에
+  올린 것이고, 화면은 `GET /api/capture-progress`(패스프레이즈 필요)로 읽는다. 서비스 워커
+  오프라인 캐시 대상이 아니다. 키/패스프레이즈 운영은 [OPERATIONS.md](./OPERATIONS.md) 참고.

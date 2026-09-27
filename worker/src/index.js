@@ -60,13 +60,32 @@ function safeExt(filename, mime) {
 function isWorkspaceItemRoute(parts) {
   return !!parts && parts.length === 4 && parts[0] === 'api' && parts[1] === 'workspace' && (parts[2] === 'folders' || parts[2] === 'books');
 }
+// 캡처 진행 현황(/api/capture-progress)만 패스프레이즈 헤더를 쓴다 — 다른 라우트의
+// preflight 응답은 예전과 똑같이 두기 위해 이 라우트일 때만 허용 헤더에 추가한다.
+function isCaptureProgressRoute(parts) {
+  return !!parts && parts.length === 2 && parts[0] === 'api' && parts[1] === 'capture-progress';
+}
 function corsHeaders(origin, parts) {
   return {
     'Access-Control-Allow-Origin': '*',
     'Access-Control-Allow-Methods': isWorkspaceItemRoute(parts) ? 'GET, POST, PUT, DELETE, OPTIONS' : 'GET, POST, OPTIONS',
-    'Access-Control-Allow-Headers': 'Content-Type',
+    'Access-Control-Allow-Headers': isCaptureProgressRoute(parts) ? 'Content-Type, X-Capture-Passphrase' : 'Content-Type',
     'Access-Control-Max-Age': '86400'
   };
+}
+
+// 패스프레이즈 비교 — 길이·내용과 무관하게 같은 시간이 걸리도록 SHA-256 해시끼리 비교한다.
+async function passphraseMatches(given, expected) {
+  if (typeof given !== 'string' || typeof expected !== 'string' || !expected) return false;
+  const enc = new TextEncoder();
+  const [a, b] = await Promise.all([
+    crypto.subtle.digest('SHA-256', enc.encode(given)),
+    crypto.subtle.digest('SHA-256', enc.encode(expected))
+  ]);
+  const x = new Uint8Array(a), y = new Uint8Array(b);
+  let diff = 0;
+  for (let i = 0; i < x.length; i++) diff |= x[i] ^ y[i];
+  return diff === 0;
 }
 
 function json(data, status, origin) {
@@ -147,6 +166,24 @@ export default {
       // GET /api/ping
       if (request.method === 'GET' && parts.length === 2 && parts[0] === 'api' && parts[1] === 'ping') {
         return json({ ok: true, time: new Date().toISOString() }, 200, origin);
+      }
+
+      // GET /api/capture-progress — 교재 캡처 진행 현황(D:\kumon-page-edit\progress-data.json).
+      // 쓰기 라우트는 두지 않는다: 업로드는 로컬에서 wrangler kv key put으로 KV
+      // capture-progress:latest에 직접 쓴다(upload_progress.py). 읽기는 Worker secret
+      // CAPTURE_PASSPHRASE와 같은 값을 X-Capture-Passphrase 헤더로 보내야 한다.
+      if (isCaptureProgressRoute(parts)) {
+        if (request.method !== 'GET') return json({ error: 'method not allowed' }, 405, origin);
+        if (!env.CAPTURE_PASSPHRASE) return json({ error: 'passphrase not configured' }, 503, origin);
+        if (!(await passphraseMatches(request.headers.get('X-Capture-Passphrase'), env.CAPTURE_PASSPHRASE))) {
+          return json({ error: 'unauthorized' }, 401, origin);
+        }
+        const raw = await env.KUMON_LAYERS.get('capture-progress:latest');
+        if (!raw) return json({ found: false }, 200, origin);
+        return new Response(raw, {
+          status: 200,
+          headers: { 'Content-Type': 'application/json', 'Cache-Control': 'no-store', ...corsHeaders(origin, parts) }
+        });
       }
 
       // /api/layers/:pageId (pageId = bookId__page, 클라이언트가 이미 encodeURIComponent로 합쳐서 보냄)
