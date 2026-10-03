@@ -63,7 +63,14 @@ function isWorkspaceItemRoute(parts) {
 // 캡처 진행 현황(/api/capture-progress)만 패스프레이즈 헤더를 쓴다 — 다른 라우트의
 // preflight 응답은 예전과 똑같이 두기 위해 이 라우트일 때만 허용 헤더에 추가한다.
 function isCaptureProgressRoute(parts) {
-  return !!parts && parts.length === 2 && parts[0] === 'api' && parts[1] === 'capture-progress';
+  return progressKvKey(parts) !== null;
+}
+// 진행 현황 라우트 → KV 키. 캡처 진행(capture-progress)과 해답지 진행(answer-progress) 두 개만 있다.
+function progressKvKey(parts) {
+  if (!parts || parts.length !== 2 || parts[0] !== 'api') return null;
+  if (parts[1] === 'capture-progress') return 'capture-progress:latest';
+  if (parts[1] === 'answer-progress') return 'answer-progress:latest';
+  return null;
 }
 function corsHeaders(origin, parts) {
   return {
@@ -178,7 +185,7 @@ export default {
         if (!(await passphraseMatches(request.headers.get('X-Capture-Passphrase'), env.CAPTURE_PASSPHRASE))) {
           return json({ error: 'unauthorized' }, 401, origin);
         }
-        const raw = await env.KUMON_LAYERS.get('capture-progress:latest');
+        const raw = await env.KUMON_LAYERS.get(progressKvKey(parts));
         if (!raw) return json({ found: false }, 200, origin);
         return new Response(raw, {
           status: 200,

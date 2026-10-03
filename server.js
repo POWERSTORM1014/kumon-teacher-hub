@@ -82,6 +82,23 @@ app.get('/api/capture-progress', async (req, res) => {
   }
 });
 
+// 해답지 캡처 진행 현황 — Worker의 GET /api/answer-progress(KV answer-progress:latest)와 같은 라우트/응답.
+// 로컬에서는 ANSWER_PROGRESS_FILE(기본 data/answer-progress.json)을 읽고, 패스프레이즈는 CAPTURE_PASSPHRASE를 그대로 쓴다.
+const ANSWER_PROGRESS_FILE = process.env.ANSWER_PROGRESS_FILE || path.join(ROOT, 'data', 'answer-progress.json');
+app.get('/api/answer-progress', async (req, res) => {
+  const expected = process.env.CAPTURE_PASSPHRASE;
+  if (!expected) return res.status(503).json({ error: 'passphrase not configured' });
+  if (!passphraseMatches(req.get('X-Capture-Passphrase'), expected)) return res.status(401).json({ error: 'unauthorized' });
+  try {
+    const raw = await fsp.readFile(ANSWER_PROGRESS_FILE, 'utf8');
+    res.set('Cache-Control', 'no-store').type('application/json').send(raw);
+  } catch (e) {
+    if (e.code === 'ENOENT') return res.json({ found: false });
+    console.error('[answer-progress:get]', e);
+    res.status(500).json({ error: 'read failed' });
+  }
+});
+
 app.get('/api/layers/:pageId', async (req, res) => {
   const { pageId } = req.params;
   if (!isSafeKey(pageId)) return res.status(400).json({ error: 'invalid pageId' });

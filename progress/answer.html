@@ -1,0 +1,336 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>해답지 캡처 진행 현황</title>
+<style>
+  :root {
+    --bg: #f4f6f9;
+    --card: #ffffff;
+    --text: #1c2430;
+    --muted: #667085;
+    --line: #e3e8ef;
+    --track: #e9edf3;
+    --bar: #3b82f6;
+    --done: #16a34a;
+    --seg-review: #f97316;
+    --seg-partial: #facc15;
+    --seg-empty: #d5dbe4;
+    --shadow: 0 1px 2px rgba(16, 24, 40, .06), 0 1px 3px rgba(16, 24, 40, .08);
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --bg: #10141a;
+      --card: #1a2029;
+      --text: #e8edf3;
+      --muted: #97a3b4;
+      --line: #2a3340;
+      --track: #2a3340;
+      --bar: #60a5fa;
+      --done: #4ade80;
+      --seg-review: #fb923c;
+      --seg-partial: #fde047;
+      --seg-empty: #3a4556;
+      --shadow: none;
+    }
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    background: var(--bg);
+    color: var(--text);
+    font-family: "Segoe UI", "Malgun Gothic", "Apple SD Gothic Neo", system-ui, sans-serif;
+    line-height: 1.45;
+  }
+  .wrap { max-width: 1200px; margin: 0 auto; padding: 20px 16px 48px; }
+
+  header.top { display: flex; flex-wrap: wrap; align-items: baseline; justify-content: space-between; gap: 4px 16px; margin-bottom: 16px; }
+  h1 { margin: 0; font-size: 1.35rem; }
+  .updated { color: var(--muted); font-size: .9rem; }
+
+  .card { background: var(--card); border: 1px solid var(--line); border-radius: 12px; box-shadow: var(--shadow); }
+
+  .summary { padding: 18px 20px; margin-bottom: 20px; }
+  .summary .row { display: flex; flex-wrap: wrap; align-items: baseline; justify-content: space-between; gap: 6px 16px; margin-bottom: 10px; }
+  .summary .label { color: var(--muted); font-size: .9rem; }
+  .summary .count { font-size: 1.6rem; font-weight: 700; font-variant-numeric: tabular-nums; }
+  .summary .count small { font-size: 1rem; font-weight: 400; color: var(--muted); }
+  .summary .pct { font-size: 1.6rem; font-weight: 700; color: var(--bar); font-variant-numeric: tabular-nums; }
+  .summary .track { height: 12px; }
+
+  .grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(340px, 1fr)); gap: 16px; align-items: start; }
+  @media (max-width: 420px) { .grid { grid-template-columns: 1fr; } }
+
+  .subject { padding: 16px 16px 8px; }
+  .subject-head { display: flex; align-items: baseline; justify-content: space-between; gap: 8px; margin-bottom: 8px; padding-bottom: 10px; border-bottom: 1px solid var(--line); }
+  .subject-head h2 { margin: 0; font-size: 1.1rem; }
+  .subject-head .meta { color: var(--muted); font-size: .85rem; font-variant-numeric: tabular-nums; white-space: nowrap; }
+
+  .stage { padding: 8px 0; border-bottom: 1px solid var(--line); }
+  .stage:last-child { border-bottom: 0; }
+  .stage-line { display: grid; grid-template-columns: 2.6em 1fr auto; align-items: center; gap: 10px; }
+  .stage-name { font-weight: 600; }
+  .stage-num { color: var(--muted); font-size: .82rem; font-variant-numeric: tabular-nums; text-align: right; white-space: nowrap; }
+  .stage-num b { color: var(--text); font-weight: 600; }
+  .stage-note { margin: 3px 0 0 calc(2.6em + 10px); font-size: .78rem; color: var(--muted); }
+
+  .track { height: 10px; background: var(--track); border-radius: 999px; overflow: hidden; }
+  .fill { height: 100%; background: var(--bar); border-radius: 999px; min-width: 0; }
+  .stage.complete .fill { background: var(--done); }
+  .stage.complete .stage-num b { color: var(--done); }
+  .stage.complete .stage-name::after { content: " ✓"; color: var(--done); }
+
+  /* 10장(20페이지) 구간 격자 */
+  .seg-row { display: flex; gap: 2px; margin: 6px 0 0 calc(2.6em + 10px); }
+  .seg { flex: 1 1 0; min-width: 5px; height: 12px; padding: 0; border: 0; border-radius: 2px; cursor: pointer; background: var(--seg-empty); }
+  .seg-done { background: var(--done); }
+  .seg-needs_review { background: var(--seg-review); }
+  .seg-partial { background: var(--seg-partial); }
+  .seg-empty { background: var(--seg-empty); }
+  .seg:focus-visible { outline: 2px solid var(--text); outline-offset: 1px; }
+  .seg-cap { min-height: 1.3em; margin: 2px 0 0 calc(2.6em + 10px); font-size: .75rem; color: var(--muted); }
+  .seg-legend { display: flex; flex-wrap: wrap; gap: 4px 14px; margin: -10px 0 18px; font-size: .78rem; color: var(--muted); }
+  .seg-legend i { display: inline-block; width: 10px; height: 10px; border-radius: 2px; margin-right: 5px; vertical-align: -1px; }
+
+  .error { padding: 20px; color: #b42318; }
+
+  .toolbar { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
+  .btn { font: inherit; font-size: .85rem; padding: 6px 12px; border-radius: 8px; border: 1px solid var(--line); background: var(--card); color: var(--text); cursor: pointer; text-decoration: none; }
+  .btn:hover { border-color: var(--muted); }
+  .btn.primary { background: var(--bar); border-color: var(--bar); color: #fff; }
+  .gate { max-width: 420px; margin: 40px auto; padding: 22px 20px; }
+  .gate h2 { margin: 0 0 6px; font-size: 1.1rem; }
+  .gate p { margin: 0 0 14px; color: var(--muted); font-size: .9rem; }
+  .gate form { display: flex; gap: 8px; }
+  .gate input { flex: 1 1 auto; min-width: 0; font: inherit; padding: 8px 10px; border-radius: 8px; border: 1px solid var(--line); background: var(--bg); color: var(--text); }
+  .gate .msg { min-height: 1.3em; margin-top: 10px; font-size: .85rem; color: #b42318; }
+  @media (prefers-color-scheme: dark) { .gate .msg, .error { color: #f97066; } }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <header class="top">
+    <h1>구몬 해답지 캡처 진행현황</h1>
+    <div class="toolbar">
+      <span class="updated" id="updated">마지막 업로드: -</span>
+      <button class="btn" type="button" id="reload" hidden>새로고침</button>
+      <button class="btn" type="button" id="logout" hidden>잠금</button>
+      <a class="btn" href="../index.html">홈으로</a>
+    </div>
+  </header>
+  <div id="app"><div class="card error" style="color:var(--muted)">불러오는 중…</div></div>
+</div>
+
+<script>
+(function () {
+  var app = document.getElementById('app');
+
+  function el(tag, cls, text) {
+    var e = document.createElement(tag);
+    if (cls) e.className = cls;
+    if (text !== undefined) e.textContent = text;
+    return e;
+  }
+  function fmt(n) { return Number(n).toLocaleString('ko-KR'); }
+  function pct(done, total) { return total > 0 ? done / total * 100 : 0; }
+  function pctText(p) {
+    if (p > 0 && p < 1) return '<1%';
+    return Math.round(p) + '%';
+  }
+  function bar(p, extraCls) {
+    var track = el('div', 'track' + (extraCls ? ' ' + extraCls : ''));
+    track.setAttribute('role', 'progressbar');
+    track.setAttribute('aria-valuemin', '0');
+    track.setAttribute('aria-valuemax', '100');
+    track.setAttribute('aria-valuenow', String(Math.round(p)));
+    var fill = el('div', 'fill');
+    fill.style.width = Math.min(100, p) + '%';
+    track.appendChild(fill);
+    return track;
+  }
+
+  // ---- 10장(20페이지) 구간 격자 (segments 가 있는 단계에만 표시) ----
+  var SEG_LABEL = { done: '완료', needs_review: '확인 필요', partial: '일부', empty: '미착수' };
+  function pad3(n) { return ('000' + n).slice(-3); }
+  function segText(st, sg) {
+    var t = '구간 ' + sg.i + ' · ' + pad3(sg.lo) + '~' + pad3(sg.hi) + '(a/b) · ' + sg.have + '/' + sg.pages + ' · ' + (SEG_LABEL[sg.status] || sg.status);
+    if (sg.problems && sg.problems.length) t += ' · 확인 필요 페이지: ' + sg.problems.join(', ');
+    else if (sg.confirmed && sg.confirmed.length) t += ' · 확인됨: ' + sg.confirmed.join(', ');
+    if (st.segmentsInfo && st.segmentsInfo.legacyRaw) t += ' · (원본 파일명이 옛 규칙이라 크롭 기준)';
+    return t;
+  }
+  function segmentGrid(st) {
+    var frag = document.createDocumentFragment();
+    var row = el('div', 'seg-row');
+    var cap = el('div', 'seg-cap');
+    cap.setAttribute('aria-live', 'polite');
+    st.segments.forEach(function (sg) {
+      var b = el('button', 'seg seg-' + sg.status);
+      b.type = 'button';
+      var txt = segText(st, sg);
+      b.title = txt;                                   // 마우스 호버
+      b.setAttribute('aria-label', txt);
+      function show() { cap.textContent = txt; }       // 터치/키보드: 눌러서 아래 줄에 표시
+      b.addEventListener('mouseenter', show);
+      b.addEventListener('focus', show);
+      b.addEventListener('click', show);
+      row.appendChild(b);
+    });
+    row.addEventListener('mouseleave', function () { cap.textContent = ''; });
+    frag.appendChild(row);
+    frag.appendChild(cap);
+    return frag;
+  }
+  function segLegend() {
+    var lg = el('div', 'seg-legend');
+    [['done', '완료'], ['needs_review', '확인 필요'], ['partial', '일부'], ['empty', '미착수']].forEach(function (p) {
+      var s = el('span');
+      var i = el('i', 'seg-' + p[0]);
+      s.appendChild(i);
+      s.appendChild(document.createTextNode(p[1]));
+      lg.appendChild(s);
+    });
+    lg.appendChild(el('span', '', '칸 = 10장(20페이지)'));
+    return lg;
+  }
+
+  function render(data) {
+    app.textContent = '';
+    document.getElementById('updated').textContent = '마지막 업로드: ' + (data.updatedAt || '-');
+
+    var totalDone = 0, totalAll = 0;
+    data.subjects.forEach(function (s) {
+      s.stages.forEach(function (st) { totalDone += st.done; totalAll += st.total; });
+    });
+    var totalP = pct(totalDone, totalAll);
+
+    var sum = el('section', 'card summary');
+    var row = el('div', 'row');
+    var left = el('div');
+    left.appendChild(el('div', 'label', '전체 완료 / 전체 대상 면(a/b)'));
+    var cnt = el('div', 'count', fmt(totalDone));
+    cnt.appendChild(el('small', '', ' / ' + fmt(totalAll)));
+    left.appendChild(cnt);
+    var right = el('div');
+    right.appendChild(el('div', 'label', '전체 진행률'));
+    right.appendChild(el('div', 'pct', totalP.toFixed(1) + '%'));
+    row.appendChild(left); row.appendChild(right);
+    sum.appendChild(row);
+    sum.appendChild(bar(totalP));
+    app.appendChild(sum);
+    if (data.subjects.some(function (s) { return s.stages.some(function (st) { return st.segments && st.segments.length; }); })) {
+      app.appendChild(segLegend());
+    }
+
+    var grid = el('div', 'grid');
+    data.subjects.forEach(function (s) {
+      var sd = 0, sa = 0;
+      s.stages.forEach(function (st) { sd += st.done; sa += st.total; });
+
+      var card = el('section', 'card subject');
+      var head = el('div', 'subject-head');
+      head.appendChild(el('h2', '', s.name));
+      head.appendChild(el('span', 'meta', fmt(sd) + ' / ' + fmt(sa) + ' · ' + pctText(pct(sd, sa))));
+      card.appendChild(head);
+
+      s.stages.forEach(function (st) {
+        var p = pct(st.done, st.total);
+        var complete = st.total > 0 && st.done >= st.total;
+        var stage = el('div', 'stage' + (complete ? ' complete' : ''));
+        var line = el('div', 'stage-line');
+        line.appendChild(el('span', 'stage-name', st.name));
+        line.appendChild(bar(p));
+        var num = el('span', 'stage-num');
+        num.appendChild(el('b', '', fmt(st.done)));
+        num.appendChild(document.createTextNode(' / ' + fmt(st.total) + ' · ' + pctText(p)));
+        line.appendChild(num);
+        stage.appendChild(line);
+        if (st.segments && st.segments.length) stage.appendChild(segmentGrid(st));
+
+        if (st.lastRange) {
+          stage.appendChild(el('div', 'stage-note', '최근: ' + st.lastRange));
+        } else if (st.note) {
+          stage.appendChild(el('div', 'stage-note', st.note));
+        }
+        card.appendChild(stage);
+      });
+      grid.appendChild(card);
+    });
+    app.appendChild(grid);
+  }
+
+  function fail(msg) {
+    app.textContent = '';
+    app.appendChild(el('div', 'card error', msg));
+  }
+
+  // ---- 데이터 읽기: kumon-teacher-hub API(/api/answer-progress), 패스프레이즈 필요(캡처 진행과 같은 패스프레이즈) ----
+  // 로컬(server.js)에서는 같은 사이트의 api/, 그 외(GitHub Pages)에서는 Cloudflare Worker —
+  // shared/annotation-engine.js의 API_BASE_URL과 같은 규칙.
+  var WORKERS_API_URL = 'https://kumon-teacher-hub-api.kumon-teacher-hub-api.workers.dev/api/';
+  var API_BASE_URL = (location.hostname === 'localhost' || location.hostname === '127.0.0.1') ? '../api/' : WORKERS_API_URL;
+  var KEY = 'kth-capture-passphrase';
+  var reloadBtn = document.getElementById('reload');
+  var logoutBtn = document.getElementById('logout');
+
+  // 이 기기에 패스프레이즈를 기억한다(사생활 보호 모드 등으로 저장소를 못 쓰면 매번 입력).
+  function getSaved() { try { return localStorage.getItem(KEY) || ''; } catch (e) { return ''; } }
+  function save(v) { try { localStorage.setItem(KEY, v); } catch (e) {} }
+  function forget() { try { localStorage.removeItem(KEY); } catch (e) {} }
+
+  function showGate(message) {
+    reloadBtn.hidden = true; logoutBtn.hidden = true;
+    document.getElementById('updated').textContent = '마지막 업로드: -';
+    app.textContent = '';
+    var box = el('section', 'card gate');
+    box.appendChild(el('h2', '', '패스프레이즈 입력'));
+    box.appendChild(el('p', '', '해답지 캡처 진행 현황은 패스프레이즈를 아는 사람만 볼 수 있습니다. 한 번 입력하면 이 기기에서 기억합니다.'));
+    var form = el('form');
+    var input = el('input');
+    input.type = 'password'; input.autocomplete = 'current-password'; input.required = true;
+    input.setAttribute('aria-label', '패스프레이즈');
+    var go = el('button', 'btn primary', '확인'); go.type = 'submit';
+    form.appendChild(input); form.appendChild(go);
+    var msg = el('div', 'msg', message || '');
+    msg.setAttribute('role', 'alert');
+    box.appendChild(form); box.appendChild(msg);
+    form.addEventListener('submit', function (ev) {
+      ev.preventDefault();
+      var v = input.value.trim();
+      if (!v) return;
+      go.disabled = true; msg.textContent = '';
+      load(v, true).finally(function () { go.disabled = false; });
+    });
+    app.appendChild(box);
+    input.focus();
+  }
+
+  function load(pass, fromGate) {
+    return fetch(API_BASE_URL + 'answer-progress', { cache: 'no-store', headers: { 'X-Capture-Passphrase': pass } })
+      .then(function (r) {
+        if (r.status === 401) { forget(); showGate(fromGate ? '패스프레이즈가 맞지 않습니다.' : '저장된 패스프레이즈가 더 이상 맞지 않습니다. 다시 입력해 주세요.'); return; }
+        if (!r.ok) throw new Error('HTTP ' + r.status);
+        return r.json().then(function (data) {
+          save(pass);
+          reloadBtn.hidden = false; logoutBtn.hidden = false;
+          if (data && data.found === false) { fail('아직 업로드된 진행 현황이 없습니다. PC에서 upload_answer_progress.py 로 먼저 올려 주세요.'); return; }
+          if (!data || !Array.isArray(data.subjects)) throw new Error('bad data');
+          render(data);
+        });
+      })
+      .catch(function (e) {
+        if (fromGate) showGate('불러오지 못했습니다(' + e.message + '). 네트워크 연결을 확인해 주세요.');
+        else fail('진행 현황을 불러오지 못했습니다(' + e.message + '). 네트워크 연결을 확인한 뒤 새로고침해 주세요.');
+      });
+  }
+
+  reloadBtn.addEventListener('click', function () { var p = getSaved(); if (p) load(p, false); else showGate(); });
+  logoutBtn.addEventListener('click', function () { forget(); showGate(); });
+
+  var saved = getSaved();
+  if (saved) load(saved, false); else showGate();
+})();
+</script>
+</body>
+</html>
