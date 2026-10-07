@@ -69,6 +69,8 @@
   .stage-table td.pages { text-align: right; color: var(--muted); font-variant-numeric: tabular-nums; white-space: nowrap; }
   .stage-table td.date { text-align: right; color: var(--muted); font-variant-numeric: tabular-nums; white-space: nowrap; font-size: .82rem; }
   .stage-table tr.done td.pages { color: var(--text); }
+  .stage-table tr.na { opacity: .55; }
+  .stage-table td.pages.na { font-style: italic; }
 
   .error { padding: 20px; color: #b42318; }
 
@@ -134,11 +136,13 @@
 
       var table = el('table', 'stage-table');
       s.stages.forEach(function (st) {
-        var tr = el('tr', st.done ? 'done' : '');
+        var isNA = st.status === 'no_answer_sheet';
+        var tr = el('tr', st.done ? 'done' : (isNA ? 'na' : ''));
         var tdName = el('td', 'name', st.name);
         var tdMark = el('td', 'mark');
-        tdMark.appendChild(el('span', st.done ? 'ok' : 'no', st.done ? '✓' : '·'));
-        var tdPages = el('td', 'pages', st.done ? (st.pages + '쪽') : (st.note || '미완료'));
+        tdMark.appendChild(el('span', st.done ? 'ok' : 'no', st.done ? '✓' : (isNA ? '–' : '·')));
+        var pagesText = st.done ? (st.pages + '쪽') : (isNA ? '해당없음' : (st.note || '미완료'));
+        var tdPages = el('td', 'pages' + (isNA ? ' na' : ''), pagesText);
         var tdDate = el('td', 'date', st.done ? st.completedAt : '');
         tr.appendChild(tdName); tr.appendChild(tdMark); tr.appendChild(tdPages); tr.appendChild(tdDate);
         table.appendChild(tr);
