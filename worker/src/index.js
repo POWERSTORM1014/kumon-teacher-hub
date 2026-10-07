@@ -65,11 +65,13 @@ function isWorkspaceItemRoute(parts) {
 function isCaptureProgressRoute(parts) {
   return progressKvKey(parts) !== null;
 }
-// 진행 현황 라우트 → KV 키. 캡처 진행(capture-progress)과 해답지 진행(answer-progress) 두 개만 있다.
+// 진행 현황 라우트 → KV 키. 캡처 진행(capture-progress)·해답지 정답입력 진행(answer-progress)·
+// 해답지 PDF 생성 현황(answer-pdf-progress) 세 개가 있다.
 function progressKvKey(parts) {
   if (!parts || parts.length !== 2 || parts[0] !== 'api') return null;
   if (parts[1] === 'capture-progress') return 'capture-progress:latest';
   if (parts[1] === 'answer-progress') return 'answer-progress:latest';
+  if (parts[1] === 'answer-pdf-progress') return 'answer-pdf-progress:latest';
   return null;
 }
 function corsHeaders(origin, parts) {

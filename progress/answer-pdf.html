@@ -1,0 +1,243 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>해답지 PDF 생성 현황</title>
+<style>
+  :root {
+    --bg: #f4f6f9;
+    --card: #ffffff;
+    --text: #1c2430;
+    --muted: #667085;
+    --line: #e3e8ef;
+    --track: #e9edf3;
+    --bar: #3b82f6;
+    --done: #16a34a;
+    --shadow: 0 1px 2px rgba(16, 24, 40, .06), 0 1px 3px rgba(16, 24, 40, .08);
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --bg: #10141a;
+      --card: #1a2029;
+      --text: #e8edf3;
+      --muted: #97a3b4;
+      --line: #2a3340;
+      --track: #2a3340;
+      --bar: #60a5fa;
+      --done: #4ade80;
+      --shadow: none;
+    }
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    background: var(--bg);
+    color: var(--text);
+    font-family: "Segoe UI", "Malgun Gothic", "Apple SD Gothic Neo", system-ui, sans-serif;
+    line-height: 1.45;
+  }
+  .wrap { max-width: 1200px; margin: 0 auto; padding: 20px 16px 48px; }
+
+  header.top { display: flex; flex-wrap: wrap; align-items: baseline; justify-content: space-between; gap: 4px 16px; margin-bottom: 16px; }
+  h1 { margin: 0; font-size: 1.35rem; }
+  .updated { color: var(--muted); font-size: .9rem; }
+
+  .card { background: var(--card); border: 1px solid var(--line); border-radius: 12px; box-shadow: var(--shadow); }
+
+  .grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(340px, 1fr)); gap: 16px; align-items: start; }
+  @media (max-width: 420px) { .grid { grid-template-columns: 1fr; } }
+
+  .subject { padding: 16px 16px 8px; }
+  .subject-head { display: flex; align-items: baseline; justify-content: space-between; gap: 8px; margin-bottom: 8px; padding-bottom: 10px; border-bottom: 1px solid var(--line); cursor: pointer; }
+  .subject-head h2 { margin: 0; font-size: 1.1rem; }
+  .subject-head .meta { font-size: .95rem; font-weight: 700; font-variant-numeric: tabular-nums; white-space: nowrap; }
+  .subject-head .meta.full { color: var(--done); }
+  .subject-head .meta.partial { color: var(--bar); }
+  .subject.collapsed .stage-table { display: none; }
+  .subject-head .chev { color: var(--muted); font-size: .85rem; margin-left: 6px; transition: transform .15s; display: inline-block; }
+  .subject.collapsed .chev { transform: rotate(-90deg); }
+
+  .stage-table { width: 100%; border-collapse: collapse; font-size: .88rem; }
+  .stage-table tr { border-bottom: 1px solid var(--line); }
+  .stage-table tr:last-child { border-bottom: 0; }
+  .stage-table td { padding: 6px 2px; vertical-align: middle; }
+  .stage-table td.name { font-weight: 600; width: 3.2em; }
+  .stage-table td.mark { width: 1.6em; text-align: center; }
+  .stage-table td.mark .ok { color: var(--done); font-weight: 700; }
+  .stage-table td.mark .no { color: var(--muted); }
+  .stage-table td.pages { text-align: right; color: var(--muted); font-variant-numeric: tabular-nums; white-space: nowrap; }
+  .stage-table td.date { text-align: right; color: var(--muted); font-variant-numeric: tabular-nums; white-space: nowrap; font-size: .82rem; }
+  .stage-table tr.done td.pages { color: var(--text); }
+
+  .error { padding: 20px; color: #b42318; }
+
+  .toolbar { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
+  .btn { font: inherit; font-size: .85rem; padding: 6px 12px; border-radius: 8px; border: 1px solid var(--line); background: var(--card); color: var(--text); cursor: pointer; text-decoration: none; }
+  .btn:hover { border-color: var(--muted); }
+  .btn.primary { background: var(--bar); border-color: var(--bar); color: #fff; }
+  .gate { max-width: 420px; margin: 40px auto; padding: 22px 20px; }
+  .gate h2 { margin: 0 0 6px; font-size: 1.1rem; }
+  .gate p { margin: 0 0 14px; color: var(--muted); font-size: .9rem; }
+  .gate form { display: flex; gap: 8px; }
+  .gate input { flex: 1 1 auto; min-width: 0; font: inherit; padding: 8px 10px; border-radius: 8px; border: 1px solid var(--line); background: var(--bg); color: var(--text); }
+  .gate .pw-field { position: relative; flex: 1 1 auto; min-width: 0; display: flex; }
+  .gate .pw-field input { width: 100%; padding-right: 38px; }
+  .gate .pw-eye { position: absolute; right: 4px; top: 50%; transform: translateY(-50%); background: none; border: 0; padding: 4px 6px; cursor: pointer; font-size: 1rem; line-height: 1; color: var(--muted); }
+  .gate .pw-eye[aria-pressed="true"] { color: var(--text); }
+  .gate .msg { min-height: 1.3em; margin-top: 10px; font-size: .85rem; color: #b42318; }
+  @media (prefers-color-scheme: dark) { .gate .msg, .error { color: #f97066; } }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <header class="top">
+    <h1>구몬 해답지 PDF 생성 현황</h1>
+    <div class="toolbar">
+      <span class="updated" id="updated">마지막 업로드: -</span>
+      <button class="btn" type="button" id="reload" hidden>새로고침</button>
+      <button class="btn" type="button" id="logout" hidden>잠금</button>
+      <a class="btn" href="answer.html">정답 입력 진행 →</a>
+      <a class="btn" href="../index.html">홈으로</a>
+    </div>
+  </header>
+  <div id="app"><div class="card error" style="color:var(--muted)">불러오는 중…</div></div>
+</div>
+
+<script>
+(function () {
+  var app = document.getElementById('app');
+
+  function el(tag, cls, text) {
+    var e = document.createElement(tag);
+    if (cls) e.className = cls;
+    if (text !== undefined) e.textContent = text;
+    return e;
+  }
+
+  function render(data) {
+    app.textContent = '';
+    document.getElementById('updated').textContent = '마지막 업로드: ' + (data.updatedAt || '-');
+
+    var grid = el('div', 'grid');
+    data.subjects.forEach(function (s) {
+      var card = el('section', 'card subject');
+      var full = s.doneCount === s.totalCount && s.totalCount > 0;
+      var head = el('div', 'subject-head');
+      head.appendChild(el('h2', '', s.name));
+      var metaWrap = el('span');
+      var meta = el('span', 'meta ' + (full ? 'full' : (s.doneCount > 0 ? 'partial' : '')), s.doneCount + ' / ' + s.totalCount);
+      metaWrap.appendChild(meta);
+      metaWrap.appendChild(el('span', 'chev', '▾'));
+      head.appendChild(metaWrap);
+      card.appendChild(head);
+
+      var table = el('table', 'stage-table');
+      s.stages.forEach(function (st) {
+        var tr = el('tr', st.done ? 'done' : '');
+        var tdName = el('td', 'name', st.name);
+        var tdMark = el('td', 'mark');
+        tdMark.appendChild(el('span', st.done ? 'ok' : 'no', st.done ? '✓' : '·'));
+        var tdPages = el('td', 'pages', st.done ? (st.pages + '쪽') : (st.note || '미완료'));
+        var tdDate = el('td', 'date', st.done ? st.completedAt : '');
+        tr.appendChild(tdName); tr.appendChild(tdMark); tr.appendChild(tdPages); tr.appendChild(tdDate);
+        table.appendChild(tr);
+      });
+      card.appendChild(table);
+
+      // 완료된(0/N) 과목은 접어서 시작 — 클릭으로 펼침/접음
+      if (s.doneCount === 0) card.classList.add('collapsed');
+      head.addEventListener('click', function () { card.classList.toggle('collapsed'); });
+
+      grid.appendChild(card);
+    });
+    app.appendChild(grid);
+  }
+
+  function fail(msg) {
+    app.textContent = '';
+    app.appendChild(el('div', 'card error', msg));
+  }
+
+  // ---- 데이터 읽기: kumon-teacher-hub API(/api/answer-pdf-progress), 패스프레이즈는
+  // 캡처 진행·해답지 정답입력 진행과 같은 것(CAPTURE_PASSPHRASE)을 그대로 쓴다.
+  var WORKERS_API_URL = 'https://kumon-teacher-hub-api.kumon-teacher-hub-api.workers.dev/api/';
+  var API_BASE_URL = (location.hostname === 'localhost' || location.hostname === '127.0.0.1') ? '../api/' : WORKERS_API_URL;
+  var KEY = 'kth-capture-passphrase';
+  var reloadBtn = document.getElementById('reload');
+  var logoutBtn = document.getElementById('logout');
+
+  function getSaved() { try { return localStorage.getItem(KEY) || ''; } catch (e) { return ''; } }
+  function save(v) { try { localStorage.setItem(KEY, v); } catch (e) {} }
+  function forget() { try { localStorage.removeItem(KEY); } catch (e) {} }
+
+  function showGate(message) {
+    reloadBtn.hidden = true; logoutBtn.hidden = true;
+    document.getElementById('updated').textContent = '마지막 업로드: -';
+    app.textContent = '';
+    var box = el('section', 'card gate');
+    box.appendChild(el('h2', '', '패스프레이즈 입력'));
+    box.appendChild(el('p', '', '해답지 PDF 생성 현황은 패스프레이즈를 아는 사람만 볼 수 있습니다. 한 번 입력하면 이 기기에서 기억합니다.'));
+    var form = el('form');
+    var field = el('div', 'pw-field');
+    var input = el('input');
+    input.type = 'password'; input.autocomplete = 'current-password'; input.required = true;
+    input.setAttribute('aria-label', '패스프레이즈');
+    var eye = el('button', 'pw-eye', '👁');
+    eye.type = 'button';
+    eye.setAttribute('aria-pressed', 'false');
+    eye.setAttribute('aria-label', '패스프레이즈 보기');
+    eye.title = '패스프레이즈 보기';
+    eye.addEventListener('click', function () {
+      var showing = input.type === 'text';
+      input.type = showing ? 'password' : 'text';
+      eye.setAttribute('aria-pressed', String(!showing));
+      eye.setAttribute('aria-label', showing ? '패스프레이즈 보기' : '패스프레이즈 가리기');
+      eye.title = eye.getAttribute('aria-label');
+      input.focus();
+    });
+    field.appendChild(input); field.appendChild(eye);
+    var go = el('button', 'btn primary', '확인'); go.type = 'submit';
+    form.appendChild(field); form.appendChild(go);
+    var msg = el('div', 'msg', message || '');
+    msg.setAttribute('role', 'alert');
+    box.appendChild(form); box.appendChild(msg);
+    form.addEventListener('submit', function (ev) {
+      ev.preventDefault();
+      var v = input.value.trim();
+      if (!v) return;
+      go.disabled = true; msg.textContent = '';
+      load(v, true).finally(function () { go.disabled = false; });
+    });
+    app.appendChild(box);
+    input.focus();
+  }
+
+  function load(pass, fromGate) {
+    return fetch(API_BASE_URL + 'answer-pdf-progress', { cache: 'no-store', headers: { 'X-Capture-Passphrase': pass } })
+      .then(function (r) {
+        if (r.status === 401) { forget(); showGate(fromGate ? '패스프레이즈가 맞지 않습니다.' : '저장된 패스프레이즈가 더 이상 맞지 않습니다. 다시 입력해 주세요.'); return; }
+        if (!r.ok) throw new Error('HTTP ' + r.status);
+        return r.json().then(function (data) {
+          save(pass);
+          reloadBtn.hidden = false; logoutBtn.hidden = false;
+          if (data && data.found === false) { fail('아직 업로드된 진행 현황이 없습니다. PC에서 upload_answer_pdf_progress.py 로 먼저 올려 주세요.'); return; }
+          if (!data || !Array.isArray(data.subjects)) throw new Error('bad data');
+          render(data);
+        });
+      })
+      .catch(function (e) {
+        if (fromGate) showGate('불러오지 못했습니다(' + e.message + '). 네트워크 연결을 확인해 주세요.');
+        else fail('진행 현황을 불러오지 못했습니다(' + e.message + '). 네트워크 연결을 확인한 뒤 새로고침해 주세요.');
+      });
+  }
+
+  reloadBtn.addEventListener('click', function () { var p = getSaved(); if (p) load(p, false); else showGate(); });
+  logoutBtn.addEventListener('click', function () { forget(); showGate(); });
+
+  var saved = getSaved();
+  if (saved) load(saved, false); else showGate();
+})();
+</script>
+</body>
+</html>
