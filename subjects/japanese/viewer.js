@@ -11,6 +11,10 @@ const Engine = AnnotationEngine;
 
 let pdfDoc = null, totalPg = 0, curPage = 1, activeInkPage = null;
 let currentMaterial = null, bookId = null, currentIsCustom = false;
+// 교재 낱장 캡처(원본+정답오버레이) 이미지 시퀀스 교재를 열었을 때만 채워진다
+// (GET /api/image-books/:bookId 응답 그대로). PDF 교재를 열면 afterPdfLoaded()가
+// 다시 null로 되돌린다 — pdfDoc/imageBookMeta는 항상 상호 배타적이다.
+let imageBookMeta = null;
 let zoom = 100, layout = 'single', sidebarOn = true, sidebarWidth = 90;
 const SIDEBAR_MIN_W = 64, SIDEBAR_MAX_W = 320, SIDEBAR_BASE_W = 90;
 let darkMode = false;
@@ -159,6 +163,7 @@ function pdfPageLabel(pdfNum) {
 async function getPageViewport1(pos) {
   const entry = Engine.PageOrder.getOrderEntry(pos);
   if (entry && entry.kind === 'inserted') return { width: entry.width, height: entry.height };
+  if (entry && entry.kind === 'image') return { width: imageBookMeta.pageWidth, height: imageBookMeta.pageHeight };
   const pg = await pdfDoc.getPage(entry ? entry.pdfPage : pos);
   return pg.getViewport({ scale: 1 });
 }
@@ -201,7 +206,7 @@ function renderList() {
         <div class="ms-item-subject">${m.subject} ${m.stage}단계 · ${m.label}</div>
         <div class="ms-item-sub">${m.range}${m.unit ? ' · ' + m.unit : ''}</div>
       </div>
-      <div class="ms-item-actions"><button class="ms-view-btn" onclick="${m.kind === 'image' ? `openImageBook('${m.bookId}')` : `openMaterial('${m.file}')`}">보기</button></div>
+      <div class="ms-item-actions"><button class="ms-view-btn" onclick="openMaterial('${m.file || bookIdOf(m)}')">보기</button></div>
     </div>`).join('');
 }
 function getMyFiles() { try { return JSON.parse(localStorage.getItem('ann:myfiles') || '[]'); } catch (e) { return []; } }
@@ -288,7 +293,7 @@ function jumpToIndexPage(bid, pdfPage) {
   document.getElementById('ms-search-results').style.display = 'none';
   const m = materialByBookId(bid);
   if (!m) return;
-  openMaterial(m.file).then(() => { goToPdfPage(pdfPage); showToast('📖 이동'); });
+  openMaterial(m.file || bookIdOf(m)).then(() => { goToPdfPage(pdfPage); showToast('📖 이동'); });
 }
 document.addEventListener('click', e => { if (!e.target.closest('.ms-search-wrap')) document.getElementById('ms-search-results').style.display = 'none'; });
 
@@ -311,14 +316,13 @@ function withTimeout(promise, ms, label) {
     promise.then(v => { clearTimeout(t); resolve(v); }, e => { clearTimeout(t); reject(e); });
   });
 }
-// kind:'image' 자료(교재 낱장 캡처 원본+정답오버레이, PDF 아님) — 기존 pdf.js+필기
-// 엔진(openMaterial, shared/annotation-engine.js)은 전혀 거치지 않고, 완전히 별도인
-// 경량 뷰어로 새 탭에서 이동한다. 설계: DESIGN-image-capture-viewer.md 1-D, 1-E.
-function openImageBook(bookId) {
-  window.open('../../shared/image-viewer.html?book=' + encodeURIComponent(bookId), '_blank');
-}
 async function openMaterial(file) {
-  const m = MATERIALS.find(x => x.file === file); if (!m) return;
+  // 일반 PDF 자료는 file로, 교재 낱장 캡처 이미지 시퀀스 자료(kind:'image', .file 없음)는
+  // bookIdOf(m)로 찾는다 — 호출부(카드 클릭/검색/북마크)가 어느 쪽이든 같은 식별자
+  // 하나를 넘기면 되므로 "이 자료가 PDF인지 이미지 시퀀스인지"는 여기 안에서만 갈린다.
+  const m = MATERIALS.find(x => x.file === file) || MATERIALS.find(x => bookIdOf(x) === file);
+  if (!m) return;
+  if (m.kind === 'image') { await openImageSequenceMaterial(m); return; }
   releaseCurrentLock(); // 이전에 열려 있던 교재의 페이지 잠금을 해제하고 새 교재를 연다
   const url = Engine.pdfUrl(m.file); // R2 공개 URL — 로컬 pdf/ 폴더는 더 이상 참조하지 않음
   try {
@@ -349,7 +353,7 @@ async function openMaterial(file) {
   }
 }
 async function afterPdfLoaded(doc, label) {
-  pdfDoc = doc; curPage = 1; zoom = 100;
+  pdfDoc = doc; imageBookMeta = null; curPage = 1; zoom = 100;
   Engine.setBook(bookId);
   const { totalPages } = await Engine.initPageOrder(bookId, doc.numPages);
   totalPg = totalPages;
@@ -360,6 +364,110 @@ async function afterPdfLoaded(doc, label) {
   if (vtStage) vtStage.value = (currentMaterial && currentMaterial.stage) || 'all';
   await buildThumbs(); await renderPages(); updatePageInfo();
   hideBookLoadingOverlay(); // 새 교재의 첫 페이지가 실제로 그려진 뒤에야 옛 화면 가림을 걷는다
+}
+
+/* ══ 이미지 시퀀스 교재(교재 낱장 캡처 원본+정답오버레이) ═══════════════
+   PDF가 아니라 R2에 올라간 JPG(원본)+PNG(정답오버레이) 시퀀스를 여는 경로.
+   openMaterial()과 똑같은 지점(showViewer/showBookLoadingOverlay/buildThumbs/
+   renderPages/updatePageInfo)을 그대로 거치고, pdfDoc 대신 imageBookMeta를 쓴다는
+   점만 다르다 — 필기/레이어/목차/검색/저장은 전부 기존 엔진 그대로(병행 구현 없음).
+   설계: DESIGN-image-capture-viewer.md */
+async function openImageSequenceMaterial(m) {
+  releaseCurrentLock();
+  try {
+    bookId = bookIdOf(m);
+    const meta = await Engine.Storage.fetchImageBook(bookId);
+    if (!meta || !meta.found) { showToast('이미지 교재 정보를 찾을 수 없습니다'); return; }
+    currentMaterial = m; currentIsCustom = false;
+    showViewer();
+    showBookLoadingOverlay();
+    showToast('이미지 교재 로딩 중...');
+    await afterImageBookLoaded(meta, m.label);
+  } catch (e) {
+    console.warn('[viewer] openImageSequenceMaterial 실패', e);
+    hideBookLoadingOverlay();
+    showToast('이미지 교재 로드 실패: ' + (e && e.message ? e.message : '알 수 없는 오류'));
+  }
+}
+// 1,2,3...totalPages(장) × sides(a,b 또는 그 이하) 순서로 PageOrder 엔트리를 만든다.
+// pdfPage 필드는 1부터 순증하는 "면" 순번(1a=1, 1b=2, 2a=3...) — PAGE_MAPS/검색/
+// 북마크/findPosByPdfPage가 전부 이 숫자 하나로 PDF 책과 똑같이 동작한다
+// (japanese-data.js의 buildJ002Page3AMap 주석 참고).
+function buildImageOrder(meta) {
+  const sides = meta.sides && meta.sides.length ? meta.sides : ['a', 'b'];
+  const entries = [];
+  let pdfPage = 0;
+  for (let sheet = 1; sheet <= meta.totalPages; sheet++) {
+    for (const side of sides) {
+      pdfPage++;
+      entries.push({ id: sheet + side, kind: 'image', pdfPage, sheet, side });
+    }
+  }
+  return entries;
+}
+async function afterImageBookLoaded(meta, label) {
+  pdfDoc = null; imageBookMeta = meta; curPage = 1; zoom = 100;
+  pdfSearchQuery = ''; pdfSearchMatches = []; pdfSearchIdx = -1; // PDF 텍스트 검색 상태 잔재 제거(이미지북엔 텍스트 레이어가 없음)
+  Engine.setBook(bookId);
+  const { totalPages } = Engine.PageOrder.initStatic(bookId, buildImageOrder(meta));
+  totalPg = totalPages;
+  document.getElementById('sb-filename').textContent = label;
+  Engine.Storage.recordRecent({ subjectId: CURRENT_SUBJECT_ID, bookId, title: label, viewerPath: CURRENT_VIEWER_PATH });
+  const vtStage = document.getElementById('vt-stage-filter');
+  if (vtStage) vtStage.value = (currentMaterial && currentMaterial.stage) || 'all';
+  await buildThumbs(); await renderPages(); updatePageInfo();
+  hideBookLoadingOverlay();
+}
+
+// base/overlay 이미지 로딩 캐시 — 같은 페이지를 썸네일+본문+재방문에서 반복 요청해도
+// 네트워크를 한 번만 탄다. 책이 바뀌어도 URL 자체가 bookId/pathToken을 포함해
+// 유일하므로 책 전환 시 캐시를 비울 필요가 없다(그냥 다른 키로 쌓일 뿐).
+const _imgLoadCache = new Map();
+function loadImageCached(url) {
+  if (_imgLoadCache.has(url)) return _imgLoadCache.get(url);
+  const p = new Promise((resolve, reject) => {
+    const img = new Image();
+    img.onload = () => resolve(img);
+    img.onerror = () => reject(new Error('이미지 로드 실패: ' + url));
+    img.src = url;
+  });
+  _imgLoadCache.set(url, p);
+  return p;
+}
+function imageEntryUrl(entry, kind) {
+  const ext = kind === 'base' ? imageBookMeta.baseExt : imageBookMeta.overlayExt;
+  const fileBase = String(entry.sheet).padStart(3, '0') + '-' + entry.side + '.' + ext;
+  return Engine.captureUrl(imageBookMeta.bookId, imageBookMeta.pathToken, kind, fileBase);
+}
+
+// 이 페이지를 "역대 처음" 여는 경우에만(로컬에도 서버에도 저장된 필기 기록이 전혀
+// 없을 때) 정답 오버레이를 보여주는 레이어를 자동으로 깔아준다. 사용자가 그 레이어를
+// 끄거나 지우거나 다른 레이어를 추가하면 그 순간부터는 완전히 일반 레이어 편집과
+// 동일하게 KV에 저장되므로, 이 시딩은 "최초 1회 기본값"일 뿐 그 이후 어떤 특별
+// 취급도 받지 않는다(별도 플래그 없이 그냥 평범한 레이어/이미지 엘리먼트).
+const _seedChecked = new Set(); // bookId__pageId — 이번 세션에 이미 판단 끝난 페이지(중복 체크 방지)
+async function seedAnswerLayerIfNeeded(pos, entry) {
+  const pageId = Engine.PageOrder.pageIdOf(pos);
+  const dedupKey = bookId + '__' + pageId;
+  if (_seedChecked.has(dedupKey)) return;
+  _seedChecked.add(dedupKey);
+
+  const rec = Engine.Elements.record(pos);
+  const isPristineLocal = rec.layers.length === 1 && rec.layers[0].id === 'default' && !Object.keys(rec.strokes).length;
+  if (!isPristineLocal) return; // 이 기기에 이미 로컬 기록이 있다 — 사용자/이전 시딩 결과를 건드리지 않음
+
+  // 로컬엔 없어도 다른 기기가 이미 저장해둔 서버 기록이 있을 수 있다 — 그 경우도 건드리지 않는다.
+  const remote = await Engine.Storage.fetchRemoteLayer(bookId, pageId);
+  if (remote && remote.found) return;
+
+  const layerId = Engine.Elements.addLayer(pos, '정답');
+  Engine.Elements.addElement(pos, layerId, {
+    type: 'image', src: imageEntryUrl(entry, 'overlay'),
+    x: 0, y: 0, width: imageBookMeta.pageWidth, height: imageBookMeta.pageHeight
+  }, { skipHistory: true });
+  // addLayer()가 방금 만든 "정답" 레이어를 활성 레이어로 바꿔놓으므로, 사용자가 바로
+  // 펜을 들었을 때 엉뚱하게 정답 레이어 위에 그려지지 않도록 기본 레이어로 되돌린다.
+  Engine.Elements.setActiveLayer(pos, rec.layers[0].id);
 }
 function showViewer() { document.getElementById('material-screen').style.display = 'none'; document.getElementById('viewer-screen').classList.add('show'); }
 function backToMaterial() { releaseCurrentLock(); document.getElementById('viewer-screen').classList.remove('show'); document.getElementById('material-screen').style.display = ''; renderList(); }
@@ -404,6 +512,13 @@ async function buildThumbs() {
       const s = 0.2;
       c.width = Math.round(entry.width * s); c.height = Math.round(entry.height * s);
       Engine.Page.templateBackground(c.getContext('2d'), c.width, c.height, entry.template);
+    } else if (entry && entry.kind === 'image') {
+      const s = 0.2;
+      c.width = Math.round(imageBookMeta.pageWidth * s); c.height = Math.round(imageBookMeta.pageHeight * s);
+      try {
+        const img = await loadImageCached(imageEntryUrl(entry, 'base'));
+        c.getContext('2d').drawImage(img, 0, 0, c.width, c.height);
+      } catch (e) { /* 썸네일 하나 실패해도 나머지는 계속 — 빈 캔버스로 남음 */ }
     } else {
       const pg = await pdfDoc.getPage(pdfNum);
       const vp = pg.getViewport({ scale: 0.2 });
@@ -581,14 +696,24 @@ async function renderPages() {
 async function renderOnePage(container, pos, scale) {
   const entry = Engine.PageOrder.getOrderEntry(pos);
   const isInserted = entry && entry.kind === 'inserted';
-  let vp, pdfPageObj = null;
+  const isImage = entry && entry.kind === 'image';
+  let vp, pdfPageObj = null, drawBackground;
   if (isInserted) vp = { width: entry.width * scale, height: entry.height * scale };
+  else if (isImage) {
+    vp = { width: imageBookMeta.pageWidth * scale, height: imageBookMeta.pageHeight * scale };
+    const baseImg = await loadImageCached(imageEntryUrl(entry, 'base'));
+    drawBackground = (ctx, w, h) => ctx.drawImage(baseImg, 0, 0, w, h);
+    // "정답" 레이어 자동 시딩은 반드시 mountPage()보다 먼저 끝나야 한다 — mountPage()가
+    // 끝나면서 그 시점의 레이어 기록으로 한 번 redrawPage()를 호출하기 때문이다.
+    await seedAnswerLayerIfNeeded(pos, entry);
+  }
   else { pdfPageObj = await pdfDoc.getPage(entry ? entry.pdfPage : pos); vp = pdfPageObj.getViewport({ scale }); }
   const wrap = document.createElement('div'); wrap.className = 'page-wrap';
   container.appendChild(wrap);
   const mounted = Engine.Page.mountPage(wrap, {
     pos, widthPx: vp.width, heightPx: vp.height, scale,
     template: isInserted ? entry.template : 'blank',
+    drawBackground,
     onElementPlacement: (kind, p, layerId, x, y) => { setActiveInkPage(p); if (kind === 'text') openTextElementModal(p, layerId, x, y, null); else openMediaElementModal(p, layerId, x, y, null); },
     onTextTap: (p, layerId, el) => openTextElementModal(p, layerId, el.x, el.y, el),
     onImageTap: (p, layerId, el) => openImageElementModal(p, layerId, el),
@@ -603,13 +728,13 @@ async function renderOnePage(container, pos, scale) {
   }
   if (pdfPageObj) await pdfPageObj.render({ canvasContext: mounted.bgCanvas.getContext('2d'), viewport: vp }).promise;
   Sync.checkPageSyncUI(pos);
-  if (pdfSearchQuery && !isInserted) await applyHighlight(pos, vp, pdfSearchQuery);
+  if (pdfSearchQuery && !isInserted && !isImage) await applyHighlight(pos, vp, pdfSearchQuery);
 }
 
 /* ══ 줌/레이아웃/사이드바 ════════════════════════════════ */
 function chZoom(d) { zoom = Math.max(25, Math.min(400, zoom + d)); document.getElementById('vt-zoom').textContent = zoom + '%'; renderPages(); }
 async function computeFitZoom(mode) {
-  if (!pdfDoc) return zoom;
+  if (!pdfDoc && !imageBookMeta) return zoom;
   const vp = await getPageViewport1(curPage);
   const container = document.getElementById('viewer-main');
   const cs = getComputedStyle(container);
@@ -632,7 +757,7 @@ function initSidebarResizer() {
   function endDrag() {
     if (!dragging) return; dragging = false; resizer.classList.remove('dragging');
     localStorage.setItem('ann:sidebarwidth', sidebarWidth);
-    if (pdfDoc) { zoom = Math.max(25, Math.min(400, Math.round(sidebarWidth / SIDEBAR_BASE_W * 100))); document.getElementById('vt-zoom').textContent = zoom + '%'; renderPages(); }
+    if (pdfDoc || imageBookMeta) { zoom = Math.max(25, Math.min(400, Math.round(sidebarWidth / SIDEBAR_BASE_W * 100))); document.getElementById('vt-zoom').textContent = zoom + '%'; renderPages(); }
   }
   resizer.addEventListener('pointerup', endDrag); resizer.addEventListener('pointercancel', endDrag);
 }
@@ -650,15 +775,18 @@ function initWheelPageNav() {
   // 필기 도구가 켜져 있어도 휠은 항상 페이지 이동으로 동작해야 한다 — 휠 스크롤은
   // 그림 그리기 제스처(포인터 드래그)와 겹치지 않으므로 펜모드 여부와 무관하다.
   Engine.Page.initWheelNav(document.getElementById('viewer-main'), {
-    canNavigate: () => !!pdfDoc && zoom <= 100,
+    canNavigate: () => !!(pdfDoc || imageBookMeta) && zoom <= 100,
     onDelta: dir => goToPage(curPage + dir)
   });
 }
 function updatePageInfo() {
   const entry = Engine.PageOrder.getOrderEntry(curPage);
   const isInserted = !!(entry && entry.kind === 'inserted');
+  const isImage = !!(entry && entry.kind === 'image');
   document.getElementById('vt-page-info').textContent = curPage + ' / ' + totalPg;
-  document.getElementById('sb-page').textContent = isInserted ? ('삽입 페이지 · ' + (entry.label || '새 페이지')) : ('PDF ' + (entry ? entry.pdfPage : curPage) + 'p');
+  document.getElementById('sb-page').textContent = isInserted ? ('삽입 페이지 · ' + (entry.label || '새 페이지'))
+    : isImage ? ('교재 ' + pageLabel(curPage))
+    : ('PDF ' + (entry ? entry.pdfPage : curPage) + 'p');
 }
 
 /* ══ 필기 툴바 ════════════════════════════════════════════ */
@@ -1256,11 +1384,14 @@ function renderBookmarkList() {
     let frontAdded = false, contentAdded = false;
     map.forEach(entry => {
       const curEntry = Engine.PageOrder.getOrderEntry(curPage);
-      const isCur = !!(curEntry && curEntry.kind === 'pdf' && curEntry.pdfPage === entry.pdf);
+      const isCur = !!(curEntry && (curEntry.kind === 'pdf' || curEntry.kind === 'image') && curEntry.pdfPage === entry.pdf);
       const row = document.createElement('div'); row.className = 'bm-item' + (isCur ? ' cur' : '');
       if (entry.type === 'front' && !frontAdded) { addSection('앞부분 · 참고자료'); frontAdded = true; }
       if (entry.type === 'content' && !contentAdded) { addSection('본문 페이지'); contentAdded = true; }
-      const pgLabel = entry.type === 'front' ? '—' : ('G' + entry.edu);
+      // entry.edu(단원 번호)가 있는 교재(예: 과학)만 "G1" 식으로 보여주고, 없으면 그냥
+      // PDF/이미지 페이지 순번을 보여준다 — PAGE_MAPS가 비어있던 지금까지는 이 분기가
+      // 한 번도 실행된 적이 없어 'G'+entry.edu가 과학 전용으로 하드코딩돼 있었음.
+      const pgLabel = entry.type === 'front' ? '—' : (typeof entry.edu === 'number' ? ('G' + entry.edu) : String(entry.pdf));
       row.innerHTML = `<div style="display:flex;flex-direction:column;gap:2px;flex:1;">
         <div style="font-size:13px;font-weight:${isCur ? '700' : '500'};color:${isCur ? 'var(--accent)' : 'var(--ink)'};">${entry.label}</div>
         <div style="font-size:11px;color:var(--ink-mid);">${entry.sub}</div></div>
@@ -1320,7 +1451,7 @@ async function applyHighlight(pos, vp, query) {
   const layer = document.getElementById('hl-layer-' + pos); if (!layer) return;
   layer.innerHTML = '';
   const entry = Engine.PageOrder.getOrderEntry(pos);
-  if (!entry || entry.kind === 'inserted') return;
+  if (!entry || entry.kind === 'inserted' || entry.kind === 'image') return; // 이미지북엔 PDF 텍스트 레이어가 없음
   const pdfNum = entry.pdfPage, q = query.toLowerCase().trim();
   try {
     const page = await pdfDoc.getPage(pdfNum);
@@ -1352,7 +1483,7 @@ async function refreshHighlights() {
   const pages = layout === 'single' ? [curPage] : (curPage % 2 === 0 ? [curPage - 1, curPage] : [curPage, curPage + 1]);
   for (const p of pages) {
     if (p < 1 || p > totalPg) continue;
-    const entry = Engine.PageOrder.getOrderEntry(p); if (!entry || entry.kind === 'inserted') continue;
+    const entry = Engine.PageOrder.getOrderEntry(p); if (!entry || entry.kind === 'inserted' || entry.kind === 'image') continue;
     const page = await pdfDoc.getPage(entry.pdfPage); const vp = page.getViewport({ scale });
     await applyHighlight(p, vp, pdfSearchQuery);
   }
@@ -1405,7 +1536,7 @@ const Sync = (function () {
     const canvas = document.getElementById('cf-preview-canvas'); const ctx = canvas.getContext('2d');
     ctx.fillStyle = '#fff'; ctx.fillRect(0, 0, canvas.width, canvas.height);
     let scale = 0.15;
-    try { if (pdfDoc) { const vp = await getPageViewport1(pos); scale = canvas.width / vp.width; } } catch (e) { }
+    try { if (pdfDoc || imageBookMeta) { const vp = await getPageViewport1(pos); scale = canvas.width / vp.width; } } catch (e) { }
     layers.forEach(l => {
       if (l.visible === false) return;
       const strokes = data[l.id]; if (!strokes || !strokes.length) return;
@@ -1438,7 +1569,9 @@ async function checkServerHealth() {
 }
 function buildPrecacheUrls() {
   const urls = ['../../index.html', '../../subjects.json', '../../manifest.json', '../../shared/annotation-engine.js', './viewer.html', './viewer.js', './japanese-data.js'];
-  MATERIALS.forEach(m => urls.push(Engine.pdfUrl(m.file))); // R2 공개 URL
+  // kind:'image' 자료는 PDF 파일이 없어 이 프리캐시 대상이 아니다(오프라인 저장은
+  // v1 범위 밖 — 필요해지면 그때 base/overlay 400장을 별도로 다룰 것).
+  MATERIALS.filter(m => m.file).forEach(m => urls.push(Engine.pdfUrl(m.file))); // R2 공개 URL
   return urls;
 }
 // 배지 색으로만 상태를 표시(idle=투명, 진행중=노랑 깜빡, 완료=초록, 실패=빨강) —
@@ -1507,7 +1640,7 @@ document.addEventListener('keydown', e => {
   // 아래 어떤 단축키도(특히 Delete/Backspace로 블록 선택 삭제) 오작동하면 안 된다.
   if (['INPUT', 'TEXTAREA', 'SELECT'].includes(e.target.tagName) || e.target.isContentEditable) return;
   if ((e.ctrlKey || e.metaKey) && e.key === 'f') { e.preventDefault(); togglePdfSearch(); return; }
-  if (!pdfDoc) return;
+  if (!pdfDoc && !imageBookMeta) return;
   if (e.key === 'ArrowRight' || e.key === 'ArrowDown') goToPage(curPage + 1);
   if (e.key === 'ArrowLeft' || e.key === 'ArrowUp') goToPage(curPage - 1);
   if (e.key === 'p' || e.key === 'P') togglePen();

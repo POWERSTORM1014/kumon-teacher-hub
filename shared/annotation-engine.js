@@ -295,6 +295,18 @@
       } catch (e) { return null; }
     }
 
+    // 교재 낱장 캡처(원본+정답오버레이) 이미지 시퀀스 교재 메타데이터 조회 —
+    // fetchRemoteLayer와 같은 패턴(실패 시 null). KV imagebook:<bookId>를 그대로
+    // 반환하는 읽기 전용 Worker 라우트(worker/src/index.js GET /api/image-books/:bookId)를
+    // 호출한다. 쓰기 라우트는 없다(업로드 스크립트가 wrangler로 직접 씀).
+    async function fetchImageBook(bookId) {
+      try {
+        const res = await fetch(API_BASE_URL + 'image-books/' + encodeURIComponent(bookId), { cache: 'no-store' });
+        if (!res.ok) return null;
+        return await res.json();
+      } catch (e) { return null; }
+    }
+
     // dataURL로 남아있는 이미지/미디어 자산을 서버 업로드 경로로 치환한다(전송 직전).
     async function migrateDataUrlAssets(bookId, pageId, rec) {
       let changed = false;
@@ -552,7 +564,7 @@
     }
 
     return {
-      loadLayer, saveLayer, removeLayer, setLastSyncAt, pushLayerToServer, fetchRemoteLayer, uploadAsset,
+      loadLayer, saveLayer, removeLayer, setLastSyncAt, pushLayerToServer, fetchRemoteLayer, fetchImageBook, uploadAsset,
       getHealth, getUsage,
       loadPageOrder, savePageOrder, fetchRemotePageOrder,
       ping, stashBackup, getBackups, restoreBackup, deleteBackup, removePageTraces,
@@ -822,6 +834,21 @@
       return { order: order.slice(), totalPages: order.length };
     }
 
+    // 이미지 시퀀스 교재(PDF 아님) 전용 — pdfNumPages 하나만 세서 order를 합성하는
+    // init()과 달리, 호출부(뷰어)가 이미지북 메타데이터로 완성해 온 order 배열(예:
+    // kind:'image'인 1a,1b,2a,2b...)을 그대로 쓴다. 이미지북은 "삽입 페이지" 기능이
+    // 없는 고정된 페이지 구성이라(교재 캡처 결과를 그대로 반영) 서버 pageorder: 키와의
+    // 병합(syncFromServer)도 하지 않는다 — 매번 이미지북 메타데이터에서 똑같은 order를
+    // 결정적으로 다시 만들 뿐이라 따로 저장/동기화할 "변경 사항" 자체가 없다. 기존
+    // init()/synthesize()/isConsistent()/syncFromServer()는 전혀 건드리지 않는다.
+    function initStatic(bid, entries) {
+      bookId = bid;
+      order = entries.slice();
+      savedAt = '';
+      Elements.invalidateCaches();
+      return { order: order.slice(), totalPages: order.length };
+    }
+
     async function syncFromServer(pdfNumPages) {
       if (!bookId) return { changed: false };
       const j = await Storage.fetchRemotePageOrder(bookId);
@@ -851,7 +878,10 @@
     function getTotalPages() { return order.length; }
     function getOrderEntry(pos) { return order[pos - 1] || null; }
     function pageIdOf(pos) { const e = getOrderEntry(pos); return e ? e.id : String(pos); }
-    function findPosByPdfPage(pdfPage) { const idx = order.findIndex(e => e.kind === 'pdf' && e.pdfPage === pdfPage); return idx >= 0 ? idx + 1 : pdfPage; }
+    // kind 'pdf'뿐 아니라 'image'(교재 낱장 캡처 이미지 시퀀스)도 같은 pdfPage
+    // 필드(1..N 순번)로 찾는다 — 이미지북 order 엔트리는 절대 kind:'pdf'가 아니므로
+    // 실제 PDF 책에서는 이 추가 조건이 아무 영향을 주지 않는다.
+    function findPosByPdfPage(pdfPage) { const idx = order.findIndex(e => (e.kind === 'pdf' || e.kind === 'image') && e.pdfPage === pdfPage); return idx >= 0 ? idx + 1 : pdfPage; }
     function countInsertedPages() { return order.filter(e => e.kind === 'inserted').length; }
 
     // position↔내용 매핑이 바뀌는 동작(삽입/삭제/재배치) 뒤에는 항상 이 함수를 거친다 —
@@ -1014,7 +1044,7 @@
     }
 
     return {
-      init, syncFromServer, getOrder, getTotalPages, getOrderEntry, pageIdOf, findPosByPdfPage,
+      init, initStatic, syncFromServer, getOrder, getTotalPages, getOrderEntry, pageIdOf, findPosByPdfPage,
       countInsertedPages, insertPages, deletePageAt, undoPendingDelete, movePage, movePages, copyPages,
       renamePage, toggleFavorite, rotatePhotoPage, MAX_INSERTED_PAGES
     };
@@ -2602,12 +2632,23 @@
   const PDF_BASE_URL = 'https://pub-2c7274e37bd74104881b4f0c725f33c0.r2.dev/';
   function pdfUrl(filename) { return PDF_BASE_URL + filename; }
 
+  // 교재 낱장 캡처(원본+정답오버레이) 이미지는 PDF와 별도인 전용 공개 R2 버킷에서
+  // 서빙한다 — 위 PDF_BASE_URL과 같은 "상수 하나가 유일한 설정 지점" 패턴.
+  // 경로 구조: {bookId}/{pathToken}/{base|overlay}/{NNN}-{a|b}.{ext}
+  // pathToken은 책마다 발급되는 추측 불가능한 접근 제한용 값(imagebook:<bookId> 메타
+  // 데이터에 포함, 반드시 그 메타데이터를 먼저 조회해서 얻어야 함). 상세:
+  // DESIGN-image-capture-viewer.md
+  const CAPTURES_BASE_URL = 'https://pub-f6db5a787c604d65916b9791cc7aa24a.r2.dev/';
+  function captureUrl(bookId, pathToken, kind, fileBase) {
+    return CAPTURES_BASE_URL + bookId + '/' + pathToken + '/' + kind + '/' + fileBase;
+  }
+
   /* ══════════════════════════════════════════════════════════
      공개 API
   ══════════════════════════════════════════════════════════ */
   const AnnotationEngine = {
     Storage, Device, Events, StorageBanner, PageOrder, Elements, Color, Ink, Tools, Page, Sync, PWA,
-    genElementId, genPageId, pdfUrl,
+    genElementId, genPageId, pdfUrl, captureUrl,
 
     // bookId(=PDF 파일명, 확장자 제외) 전환 — 새 교재를 열 때 반드시 호출.
     setBook(bookId) { Elements.setBook(bookId); Page.unmountAll(); },
