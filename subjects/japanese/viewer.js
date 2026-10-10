@@ -201,7 +201,7 @@ function renderList() {
         <div class="ms-item-subject">${m.subject} ${m.stage}단계 · ${m.label}</div>
         <div class="ms-item-sub">${m.range}${m.unit ? ' · ' + m.unit : ''}</div>
       </div>
-      <div class="ms-item-actions"><button class="ms-view-btn" onclick="openMaterial('${m.file}')">보기</button></div>
+      <div class="ms-item-actions"><button class="ms-view-btn" onclick="${m.kind === 'image' ? `openImageBook('${m.bookId}')` : `openMaterial('${m.file}')`}">보기</button></div>
     </div>`).join('');
 }
 function getMyFiles() { try { return JSON.parse(localStorage.getItem('ann:myfiles') || '[]'); } catch (e) { return []; } }
@@ -310,6 +310,12 @@ function withTimeout(promise, ms, label) {
     const t = setTimeout(() => reject(new Error((label || '작업') + ' 시간 초과')), ms);
     promise.then(v => { clearTimeout(t); resolve(v); }, e => { clearTimeout(t); reject(e); });
   });
+}
+// kind:'image' 자료(교재 낱장 캡처 원본+정답오버레이, PDF 아님) — 기존 pdf.js+필기
+// 엔진(openMaterial, shared/annotation-engine.js)은 전혀 거치지 않고, 완전히 별도인
+// 경량 뷰어로 새 탭에서 이동한다. 설계: DESIGN-image-capture-viewer.md 1-D, 1-E.
+function openImageBook(bookId) {
+  window.open('../../shared/image-viewer.html?book=' + encodeURIComponent(bookId), '_blank');
 }
 async function openMaterial(file) {
   const m = MATERIALS.find(x => x.file === file); if (!m) return;

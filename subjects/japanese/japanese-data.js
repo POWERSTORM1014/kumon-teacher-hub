@@ -5,10 +5,16 @@
 // PAGE_MAPS[bookId]가 없으면 "N페이지" 같은 기본 라벨로 자동 대체하므로 정상 동작한다.)
 
 // pdf/kumon-japanese-*.pdf를 인식해서 자료실 목록에 그대로 노출한다.
+//
+// kind:'image' 항목(교재 낱장 캡처 원본+정답오버레이, PDF 아님)은 file 대신 bookId를
+// 직접 쓴다 — 업로드 스크립트(D:\kumon-page-edit\upload_page_captures.py)가 끝나면
+// 콘솔에 출력해주는 내용을 그대로 붙여넣은 것이다. 클릭 시 분기는 viewer.js의
+// renderList()/openMaterial() 참고. 설계: DESIGN-image-capture-viewer.md
 const MATERIALS = [
   { file: 'kumon-japanese-C-171-180.pdf', subject: '일본어', stage: 'C', range: 'C171~C180', icon: '🇯🇵', category: 'textbook', label: 'C단계 교재 (C171~C180)' },
+  { bookId: 'kumon-japanese-002-3A', kind: 'image', subject: '일본어', stage: '3A', range: '1~200장', icon: '🇯🇵', category: 'textbook', label: '3A단계 교재 원본+정답 (전체 200장)' },
 ];
-function bookIdOf(material) { return material.file.replace(/\.pdf$/i, ''); }
+function bookIdOf(material) { return material.bookId || material.file.replace(/\.pdf$/i, ''); }
 function materialByBookId(bookId) { return MATERIALS.find(m => bookIdOf(m) === bookId) || null; }
 
 // 교재별 페이지 지도(PDF 실제 페이지 번호 → 표시 라벨) — 아직 정리된 게 없음.
