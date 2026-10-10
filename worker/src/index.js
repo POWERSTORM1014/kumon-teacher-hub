@@ -7,6 +7,10 @@
 // 키 규칙(로컬 파일명 규칙과 최대한 대응):
 //   data/layers/<bookId>__<page>.json      → KV key "layer:<bookId>__<page>"
 //   data/page-order/<bookId>.json          → KV key "pageorder:<bookId>"
+//   (로컬 대응 없음, 업로드 스크립트 전용) → KV key "imagebook:<bookId>" / "imagebook:_index"
+//   교재 낱장 캡처(원본+정답오버레이) 이미지북 메타데이터. 이 키들은 Worker가 쓰지
+//   않고 읽기만 한다 — 쓰기는 D:\kumon-page-edit\upload_page_captures.py가 로컬에서
+//   wrangler kv key put --remote로 직접 한다. 상세: DESIGN-image-capture-viewer.md
 // 하나의 KV 네임스페이스를 layers/page-order가 함께 쓰므로, 로컬의 디렉토리 분리
 // 대신 키 접두사로 같은 구분을 유지한다.
 //
@@ -243,6 +247,32 @@ export default {
           await env.KUMON_LAYERS.put(kvKey, JSON.stringify({ bookId, order, savedAt }));
           return json({ ok: true, savedAt }, 200, origin);
         }
+      }
+
+      // GET /api/image-books, GET /api/image-books/:bookId — 교재 낱장 캡처(원본+정답
+      // 오버레이) 이미지북 메타데이터 조회. 읽기 전용, 공개(패스프레이즈 불필요) —
+      // 쓰기는 Worker에 라우트가 없고 로컬 업로드 스크립트가 wrangler kv key put으로
+      // imagebook:<bookId>/imagebook:_index에 직접 쓴다(DESIGN-image-capture-viewer.md
+      // 1-B 참고). 이미지 바이트 자체는 이 Worker를 거치지 않고 R2 공개 버킷에서
+      // 브라우저가 직접 받는다(PDF와 동일한 패턴) — 여기서 돌려주는 메타데이터에만
+      // pathToken이 들어있고, 뷰어는 그 토큰으로 이미지 URL을 조립한다.
+      if (parts.length === 2 && parts[0] === 'api' && parts[1] === 'image-books') {
+        if (request.method !== 'GET') return json({ error: 'method not allowed' }, 405, origin);
+        const raw = await env.KUMON_LAYERS.get('imagebook:_index');
+        const ids = raw ? JSON.parse(raw) : [];
+        const books = (await Promise.all(ids.map(async id => {
+          const b = await env.KUMON_LAYERS.get('imagebook:' + id);
+          return b ? JSON.parse(b) : null;
+        }))).filter(Boolean);
+        return json({ books }, 200, origin);
+      }
+      if (parts.length === 3 && parts[0] === 'api' && parts[1] === 'image-books') {
+        if (request.method !== 'GET') return json({ error: 'method not allowed' }, 405, origin);
+        const bookId = parts[2];
+        if (!isSafeKey(bookId)) return json({ error: 'invalid bookId' }, 400, origin);
+        const raw = await env.KUMON_LAYERS.get('imagebook:' + bookId);
+        if (!raw) return json({ found: false }, 200, origin);
+        return json({ found: true, ...JSON.parse(raw) }, 200, origin);
       }
 
       // POST /api/upload — 이미지/오디오·영상 dataURL을 R2(kumon-lesson-notes)에 저장

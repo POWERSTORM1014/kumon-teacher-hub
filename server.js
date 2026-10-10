@@ -243,6 +243,42 @@ app.post('/api/page-order/:bookId', async (req, res) => {
   }
 });
 
+// 교재 낱장 캡처(원본+정답오버레이) 이미지북 메타데이터 — Worker의
+// GET /api/image-books, GET /api/image-books/:bookId(KV imagebook:_index /
+// imagebook:<bookId>)와 같은 라우트/응답. 로컬에서는 data/image-books/<bookId>.json +
+// _index.json을 읽는다. 쓰기 라우트는 여기도 없다 — 업로드 스크립트가 로컬 파일을
+// 직접 쓰고(로컬 개발용), 운영은 wrangler kv key put으로 KV에 직접 쓴다
+// (DESIGN-image-capture-viewer.md 1-B 참고).
+const IMAGE_BOOKS_DIR = path.join(ROOT, 'data', 'image-books');
+fs.mkdirSync(IMAGE_BOOKS_DIR, { recursive: true });
+app.get('/api/image-books', async (req, res) => {
+  try {
+    const idxFile = path.join(IMAGE_BOOKS_DIR, '_index.json');
+    let ids = [];
+    try { ids = JSON.parse(await fsp.readFile(idxFile, 'utf8')); } catch (e) { if (e.code !== 'ENOENT') throw e; }
+    const books = (await Promise.all(ids.map(async id => {
+      try { return JSON.parse(await fsp.readFile(path.join(IMAGE_BOOKS_DIR, id + '.json'), 'utf8')); }
+      catch (e) { return null; }
+    }))).filter(Boolean);
+    res.json({ books });
+  } catch (e) {
+    console.error('[image-books:list]', e);
+    res.status(500).json({ error: 'read failed' });
+  }
+});
+app.get('/api/image-books/:bookId', async (req, res) => {
+  const { bookId } = req.params;
+  if (!isSafeKey(bookId)) return res.status(400).json({ error: 'invalid bookId' });
+  try {
+    const raw = await fsp.readFile(path.join(IMAGE_BOOKS_DIR, bookId + '.json'), 'utf8');
+    res.json({ found: true, ...JSON.parse(raw) });
+  } catch (e) {
+    if (e.code === 'ENOENT') return res.json({ found: false });
+    console.error('[image-books:get]', bookId, e);
+    res.status(500).json({ error: 'read failed' });
+  }
+});
+
 /* ══════════════════════════════════════════════════════════════
    "나의 폴더"(워크스페이스) — 사용자가 실시간으로 만드는 폴더/책.
    KV의 workspace:folders / workspace:books 두 키(전체 배열 하나씩)에 대응하는
