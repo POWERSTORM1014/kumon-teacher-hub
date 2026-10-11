@@ -1112,6 +1112,23 @@
       layer.visible = !layer.visible;
       persist(pos);
     }
+    // 레이어 패널 목록 순서 = 그리는 순서(배열 뒤쪽일수록 위에 그려짐) 이므로, 패널에서
+    // 한 칸 위/아래로 옮기는 것은 배열에서 바로 옆 자리와 맞바꾸는 것과 같다. 이름/내용은
+    // 그대로 두고 배열 위치만 바뀐다 — 화면에 보이는 우선순위(어느 레이어가 위에 보일지)를
+    // 바꾸고 싶을 때 쓴다.
+    function moveLayer(pos, id, direction) {
+      const rec = record(pos);
+      const idx = rec.layers.findIndex(l => l.id === id);
+      if (idx === -1) return { error: 'not-found' };
+      const swapIdx = direction === 'up' ? idx - 1 : idx + 1;
+      if (swapIdx < 0 || swapIdx >= rec.layers.length) return { error: 'edge' };
+      const tmp = rec.layers[idx];
+      rec.layers[idx] = rec.layers[swapIdx];
+      rec.layers[swapIdx] = tmp;
+      persist(pos);
+      Events.emitStructureChanged({ scope: 'layers', pos, bookId });
+      return { ok: true };
+    }
     function deleteLayer(pos, id) {
       const rec = record(pos);
       if (rec.layers.length <= 1) return { error: 'last-layer' };
@@ -1316,7 +1333,7 @@
 
     return {
       setBook, invalidateCaches, resetHistory, record, persist,
-      getLayerList, getActiveLayerId, setActiveLayer, addLayer, renameLayer, toggleLayerVisible, deleteLayer, clearPage,
+      getLayerList, getActiveLayerId, setActiveLayer, addLayer, renameLayer, toggleLayerVisible, moveLayer, deleteLayer, clearPage,
       getElements, getAllElements, addElement, deleteElement, updateElement, findStrokeNear, findShapeNear, isLayerVisible,
       findStrokesInRect, moveElements, deleteElements,
       undo, redo, genElementId

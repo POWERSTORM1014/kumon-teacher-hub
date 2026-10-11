@@ -1248,11 +1248,13 @@ function renderLayerPanel() {
   const layerList = Engine.Elements.getLayerList(p);
   const activeId = Engine.Elements.getActiveLayerId(p);
   labelEl.textContent = pageLabel(p) + ' 페이지의 레이어';
-  list.innerHTML = layerList.map(l => `
+  list.innerHTML = layerList.map((l, i) => `
     <div class="lp-row${l.id === activeId ? ' active' : ''}">
       <input type="checkbox" ${l.visible ? 'checked' : ''} onchange="toggleLayerVisible('${l.id}')">
       <span class="lp-row-name" onclick="setActiveLayer('${l.id}')">${l.name}</span>
       ${l.id === activeId ? '<span class="lp-row-badge">활성</span>' : ''}
+      <button class="lp-icon-btn" onclick="moveLayerUp('${l.id}')" title="위로" ${i === 0 ? 'disabled' : ''}>▲</button>
+      <button class="lp-icon-btn" onclick="moveLayerDown('${l.id}')" title="아래로" ${i === layerList.length - 1 ? 'disabled' : ''}>▼</button>
       <button class="lp-icon-btn" onclick="renameLayer('${l.id}')">✎</button>
       <button class="lp-icon-btn" onclick="deleteLayerUI('${l.id}')">🗑</button>
     </div>`).join('');
@@ -1271,6 +1273,8 @@ function renameLayer(id) {
   openTextPrompt('레이어 이름 변경', layer.name, name => { Engine.Elements.renameLayer(p, id, name); });
 }
 function toggleLayerVisible(id) { const p = panelPage(); Engine.Elements.toggleLayerVisible(p, id); Engine.Page.redrawPage(p); }
+function moveLayerUp(id) { const p = panelPage(); Engine.Elements.moveLayer(p, id, 'up'); Engine.Page.redrawPage(p); renderLayerPanel(); }
+function moveLayerDown(id) { const p = panelPage(); Engine.Elements.moveLayer(p, id, 'down'); Engine.Page.redrawPage(p); renderLayerPanel(); }
 function setActiveLayer(id) { const p = panelPage(); Engine.Elements.setActiveLayer(p, id); renderLayerPanel(); }
 function deleteLayerUI(id) {
   const p = panelPage();
