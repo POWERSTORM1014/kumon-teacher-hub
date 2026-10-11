@@ -6,7 +6,7 @@
 
 // pdf/kumon-chinese-*.pdf를 인식해서 자료실 목록에 그대로 노출한다.
 const MATERIALS = [
-  { file: 'kumon-chinese-D-131-140.pdf', subject: '중국어', stage: 'D', range: 'D131~D140', icon: '🇨🇳', category: 'textbook', label: 'D단계 교재 (D131~D140)' },
+  { file: 'kumon-chinese-D-131-140.pdf', subject: '중국어', stage: 'D', range: 'D131~D140', icon: '🇨🇳', category: 'textbook', label: 'D단계 교재 (D131~D140)', archived: true }, // 초기 샘플(구방식) — 자료실 화면에서 숨김(2026-10-11)
 ];
 function bookIdOf(material) { return material.file.replace(/\.pdf$/i, ''); }
 function materialByBookId(bookId) { return MATERIALS.find(m => bookIdOf(m) === bookId) || null; }

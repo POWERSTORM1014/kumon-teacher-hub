@@ -6,8 +6,8 @@
 
 // pdf/kumon-english-*.pdf를 인식해서 자료실 목록에 그대로 노출한다.
 const MATERIALS = [
-  { file: 'kumon-english-C-121-130.pdf', subject: '영어', stage: 'C', range: 'C121~C130', icon: '🔤', category: 'textbook', label: 'C단계 교재 (C121~C130)' },
-  { file: 'kumon-english-C-131-140.pdf', subject: '영어', stage: 'C', range: 'C131~C140', icon: '🔡', category: 'textbook', label: 'C단계 교재 (C131~C140)' },
+  { file: 'kumon-english-C-121-130.pdf', subject: '영어', stage: 'C', range: 'C121~C130', icon: '🔤', category: 'textbook', label: 'C단계 교재 (C121~C130)', archived: true }, // 초기 샘플(구방식) — 자료실 화면에서 숨김(2026-10-11)
+  { file: 'kumon-english-C-131-140.pdf', subject: '영어', stage: 'C', range: 'C131~C140', icon: '🔡', category: 'textbook', label: 'C단계 교재 (C131~C140)', archived: true }, // 초기 샘플(구방식) — 자료실 화면에서 숨김(2026-10-11)
 ];
 function bookIdOf(material) { return material.file.replace(/\.pdf$/i, ''); }
 function materialByBookId(bookId) { return MATERIALS.find(m => bookIdOf(m) === bookId) || null; }

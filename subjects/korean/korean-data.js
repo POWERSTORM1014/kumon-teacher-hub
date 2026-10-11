@@ -6,8 +6,8 @@
 
 // pdf/kumon-korean-*.pdf를 인식해서 자료실 목록에 그대로 노출한다.
 const MATERIALS = [
-  { file: 'kumon-korean-E1-101-110.pdf', subject: '국어', stage: 'E1', range: 'E1-101~110', icon: '📖', category: 'textbook', label: 'E1단계 교재 (101~110)' },
-  { file: 'kumon-korean-G1-041-050.pdf', subject: '국어', stage: 'G1', range: 'G1-041~050', icon: '📚', category: 'textbook', label: 'G1단계 교재 (041~050)' },
+  { file: 'kumon-korean-E1-101-110.pdf', subject: '국어', stage: 'E1', range: 'E1-101~110', icon: '📖', category: 'textbook', label: 'E1단계 교재 (101~110)', archived: true }, // 초기 샘플(구방식) — 자료실 화면에서 숨김(2026-10-11)
+  { file: 'kumon-korean-G1-041-050.pdf', subject: '국어', stage: 'G1', range: 'G1-041~050', icon: '📚', category: 'textbook', label: 'G1단계 교재 (041~050)', archived: true }, // 초기 샘플(구방식) — 자료실 화면에서 숨김(2026-10-11)
 ];
 function bookIdOf(material) { return material.file.replace(/\.pdf$/i, ''); }
 function materialByBookId(bookId) { return MATERIALS.find(m => bookIdOf(m) === bookId) || null; }

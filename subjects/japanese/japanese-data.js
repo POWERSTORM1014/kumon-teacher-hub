@@ -9,7 +9,7 @@
 // 렌더링/클릭/자료실 구조 자체는 PDF 자료와 완전히 동일하다(별도 UI 분기 없음).
 // 설계: DESIGN-image-capture-viewer.md
 const MATERIALS = [
-  { file: 'kumon-japanese-C-171-180.pdf', subject: '일본어', stage: 'C', range: 'C171~C180', icon: '🇯🇵', category: 'textbook', label: 'C단계 교재 (C171~C180)' },
+  { file: 'kumon-japanese-C-171-180.pdf', subject: '일본어', stage: 'C', range: 'C171~C180', icon: '🇯🇵', category: 'textbook', label: 'C단계 교재 (C171~C180)', archived: true }, // 초기 샘플(구방식) — 실제 C단계 작업은 kind:'image' bookId로 별도 등록. 자료실 화면에서 숨김(2026-10-11)
   { bookId: 'kumon-japanese-002-3A', kind: 'image', subject: '일본어', stage: '3A', range: '1~200장', icon: '🇯🇵', category: 'textbook', label: '3A단계 교재 원본+정답 (전체 200장)' },
   { bookId: 'kumon-japanese-003-2A', kind: 'image', subject: '일본어', stage: '2A', range: '1~200장', icon: '🇯🇵', category: 'textbook', label: '2A단계 교재 원본+정답 (전체 200장)' },
   { bookId: 'kumon-japanese-004-A', kind: 'image', subject: '일본어', stage: 'A', range: '1~200장', icon: '🇯🇵', category: 'textbook', label: 'A단계 교재 원본+정답 (전체 200장)' },

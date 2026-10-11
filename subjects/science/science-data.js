@@ -4,10 +4,10 @@
 
 // pdf/kumon-science-*.pdf 4개를 인식해서 자료실 목록에 그대로 노출한다.
 const MATERIALS = [
-  { file: 'kumon-science-D-081-090.pdf', subject: '과학', stage: 'D', range: 'D81~D90', icon: '🌋', category: 'textbook', label: 'D단계 교재 (D81~D90)' },
-  { file: 'kumon-science-G-001-010.pdf', subject: '과학', stage: 'G', range: 'G1~G10', icon: '🔬', category: 'textbook', label: 'G단계 교재 (G1~G10)' },
-  { file: 'kumon-science-G-041-050.pdf', subject: '과학', stage: 'G', range: 'G41~G50', icon: '🌱', category: 'textbook', label: 'G단계 교재 (G41~G50)', unit: '지권의 변화 5 · 풍화' },
-  { file: 'kumon-science-H-101-110.pdf', subject: '과학', stage: 'H', range: 'H101~H110', icon: '⚛️', category: 'textbook', label: 'H단계 교재 (H101~H110)' },
+  { file: 'kumon-science-D-081-090.pdf', subject: '과학', stage: 'D', range: 'D81~D90', icon: '🌋', category: 'textbook', label: 'D단계 교재 (D81~D90)', archived: true }, // 초기 샘플(구방식) — 자료실 화면에서 숨김(2026-10-11)
+  { file: 'kumon-science-G-001-010.pdf', subject: '과학', stage: 'G', range: 'G1~G10', icon: '🔬', category: 'textbook', label: 'G단계 교재 (G1~G10)', archived: true }, // 초기 샘플(구방식) — PAGE_MAPS/SUMMARY 데이터는 보존, 화면에서만 숨김(2026-10-11)
+  { file: 'kumon-science-G-041-050.pdf', subject: '과학', stage: 'G', range: 'G41~G50', icon: '🌱', category: 'textbook', label: 'G단계 교재 (G41~G50)', unit: '지권의 변화 5 · 풍화', archived: true }, // 초기 샘플(구방식) — PAGE_MAPS/SUMMARY 데이터는 보존, 화면에서만 숨김(2026-10-11)
+  { file: 'kumon-science-H-101-110.pdf', subject: '과학', stage: 'H', range: 'H101~H110', icon: '⚛️', category: 'textbook', label: 'H단계 교재 (H101~H110)', archived: true }, // 초기 샘플(구방식) — 자료실 화면에서 숨김(2026-10-11)
 ];
 function bookIdOf(material) { return material.file.replace(/\.pdf$/i, ''); }
 function materialByBookId(bookId) { return MATERIALS.find(m => bookIdOf(m) === bookId) || null; }

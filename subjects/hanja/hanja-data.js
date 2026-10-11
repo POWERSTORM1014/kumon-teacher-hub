@@ -6,7 +6,7 @@
 
 // pdf/kumon-hanja-*.pdf를 인식해서 자료실 목록에 그대로 노출한다.
 const MATERIALS = [
-  { file: 'kumon-hanja-D2-031-040.pdf', subject: '한자', stage: 'D2', range: 'D2-031~040', icon: '字', category: 'textbook', label: 'D2단계 교재 (031~040)' },
+  { file: 'kumon-hanja-D2-031-040.pdf', subject: '한자', stage: 'D2', range: 'D2-031~040', icon: '字', category: 'textbook', label: 'D2단계 교재 (031~040)', archived: true }, // 초기 샘플(구방식) — 자료실 화면에서 숨김(2026-10-11)
 ];
 function bookIdOf(material) { return material.file.replace(/\.pdf$/i, ''); }
 function materialByBookId(bookId) { return MATERIALS.find(m => bookIdOf(m) === bookId) || null; }

@@ -183,7 +183,7 @@ function switchSubTab(sub) {
 // 만들지 않는다.
 const STAGE_FILTER_SELECT_IDS = ['ms-stage-filter', 'vt-stage-filter'];
 function populateStageFilter() {
-  const stages = Array.from(new Set(MATERIALS.map(m => m.stage).filter(Boolean))).sort();
+  const stages = Array.from(new Set(MATERIALS.filter(m => !m.archived).map(m => m.stage).filter(Boolean))).sort();
   const optionsHtml = '<option value="all">전체 단계</option>' + stages.map(s => `<option value="${s}">${s}단계</option>`).join('');
   STAGE_FILTER_SELECT_IDS.forEach(id => { const sel = document.getElementById(id); if (sel) sel.innerHTML = optionsHtml; });
 }
@@ -191,7 +191,7 @@ function renderList() {
   const list = document.getElementById('ms-list');
   if (currentTab === 'myfiles') { renderMyFiles(); return; }
   const stageFilter = document.getElementById('ms-stage-filter').value;
-  let items = MATERIALS.filter(m => m.category === currentSubTab);
+  let items = MATERIALS.filter(m => m.category === currentSubTab && !m.archived);
   if (stageFilter !== 'all') items = items.filter(m => m.stage === stageFilter);
   if (!items.length) { list.innerHTML = '<div class="ms-empty">📂 해당 자료가 없습니다</div>'; return; }
   list.innerHTML = items.map(m => `
