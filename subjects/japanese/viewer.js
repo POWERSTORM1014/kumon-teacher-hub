@@ -488,9 +488,24 @@ function closeOfflineUnavailable() { document.getElementById('offline-unavail-mo
 function retryOfflineMaterial() { const m = pendingOfflineMaterial; closeOfflineUnavailable(); if (m) openMaterial(m.file || bookIdOf(m)); }
 
 /* ══ 썸네일 / 목차 ══════════════════════════════════════ */
+let _thumbObserver = null;
+function lazyThumbObserver() {
+  if (_thumbObserver) return _thumbObserver;
+  _thumbObserver = new IntersectionObserver(entries => {
+    entries.forEach(en => {
+      if (!en.isIntersecting) return;
+      const c = en.target; _thumbObserver.unobserve(c);
+      const url = c.dataset.thumbUrl; if (!url) return;
+      loadImageCached(url).then(img => { c.getContext('2d').drawImage(img, 0, 0, c.width, c.height); })
+        .catch(() => { /* 썸네일 하나 실패해도 나머지는 계속 — 빈 캔버스로 남음 */ });
+    });
+  }, { rootMargin: '800px 0px' });
+  return _thumbObserver;
+}
 async function buildThumbs() {
   const list = document.getElementById('thumb-list');
   list.innerHTML = '';
+  if (_thumbObserver) { _thumbObserver.disconnect(); _thumbObserver = null; }
   for (let p = 1; p <= totalPg; p++) {
     const entry = Engine.PageOrder.getOrderEntry(p);
     const isInserted = !!(entry && entry.kind === 'inserted');
@@ -515,10 +530,10 @@ async function buildThumbs() {
     } else if (entry && entry.kind === 'image') {
       const s = 0.2;
       c.width = Math.round(imageBookMeta.pageWidth * s); c.height = Math.round(imageBookMeta.pageHeight * s);
-      try {
-        const img = await loadImageCached(imageEntryUrl(entry, 'base'));
-        c.getContext('2d').drawImage(img, 0, 0, c.width, c.height);
-      } catch (e) { /* 썸네일 하나 실패해도 나머지는 계속 — 빈 캔버스로 남음 */ }
+      // 이미지북 썸네일은 400~500장을 하나씩 기다리며 그리면 첫 페이지 표시가 수 분 늦어진다 —
+      // 자리(캔버스 크기)만 먼저 잡고, 실제 그림은 목록에서 화면 근처에 올 때 지연 로딩한다.
+      c.dataset.thumbUrl = imageEntryUrl(entry, 'base');
+      lazyThumbObserver().observe(c);
     } else {
       const pg = await pdfDoc.getPage(pdfNum);
       const vp = pg.getViewport({ scale: 0.2 });
