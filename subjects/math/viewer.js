@@ -649,6 +649,26 @@ function initWheelPageNav() {
     onDelta: dir => goToPage(curPage + dir)
   });
 }
+// 손가락 제스처(엔진 initTouchNav): 두 손가락 핀치 = 확대/축소(기존 zoom 로직 재사용),
+// 한 손가락 = 필기 모드가 꺼져 있고 페이지 폭이 화면 안에 들어올 때만 페이지 넘김, 그 외엔 화면 이동.
+function initTouchPageNav() {
+  const main = document.getElementById('viewer-main');
+  const hasDoc = () => !!pdfDoc || (typeof imageBookMeta !== 'undefined' && !!imageBookMeta);
+  Engine.Page.initTouchNav(main, {
+    getZoom: () => zoom,
+    canZoom: () => hasDoc(),
+    canSwipe: () => hasDoc() && !Engine.Tools.isPenMode() && main.scrollWidth <= main.clientWidth + 2,
+    onSwipe: dir => goToPage(curPage + dir),
+    onZoom: async (newZoom, focal) => {
+      const r = main.getBoundingClientRect();
+      const fx = focal.x - r.left, fy = focal.y - r.top;
+      const cx = main.scrollLeft + fx, cy = main.scrollTop + fy; // 핀치 기준점의 내용 좌표
+      zoom = newZoom; document.getElementById('vt-zoom').textContent = zoom + '%';
+      await renderPages();
+      main.scrollLeft = cx * focal.ratio - fx; main.scrollTop = cy * focal.ratio - fy;
+    }
+  });
+}
 function updatePageInfo() {
   const entry = Engine.PageOrder.getOrderEntry(curPage);
   const isInserted = !!(entry && entry.kind === 'inserted');
@@ -1589,6 +1609,7 @@ document.addEventListener('DOMContentLoaded', () => {
   initSidebarResizer();
   initSpectrumEvents();
   initWheelPageNav();
+  initTouchPageNav();
   Engine.Events.on(handleStructureChanged);
   try { initShapeUi(); } catch (e) { console.warn('[viewer] 도형 UI를 초기화하지 못했어요 — 책 열기는 계속합니다', e); }
   makeDialogDraggable('te-box', 'te-drag-handle');

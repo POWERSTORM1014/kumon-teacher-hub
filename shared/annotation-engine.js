@@ -2028,6 +2028,29 @@
     // 박스의 가로/세로가 서로 바뀌므로(회전 전 100x60 → 90도 회전 후 60x100),
     // rotateImageElement 쪽에서 width/height를 같이 스왑해 el에 저장해둔다 — 여기서는
     // 그 값을 그대로 읽어 "회전 전 크기(swap된 값)"로 그린 뒤 중앙 기준으로 돌리기만 한다.
+    // 정답 오버레이 진하기 보정용 SVG 필터(문서당 1회 주입). alphaExp<1이면 반투명 가장자리가
+    // 진해지고(0과 1은 그대로), colorScale<1이면 색이 진해진다. 값은 localStorage
+    // 'kth:ansBoost' = "alphaExp,colorScale"로 덮어써서 기기에서 바로 비교해볼 수 있다.
+    const ANS_BOOST_DEFAULT = { alphaExp: 0.5, colorScale: 0.8 };
+    function answerBoostValues() {
+      try {
+        const v = (localStorage.getItem('kth:ansBoost') || '').split(',').map(Number);
+        if (v.length === 2 && v.every(n => n > 0 && n <= 2)) return { alphaExp: v[0], colorScale: v[1] };
+      } catch (e) { }
+      return ANS_BOOST_DEFAULT;
+    }
+    function ensureAnswerBoostFilter() {
+      if (document.getElementById('kth-ans-boost')) return;
+      const b = answerBoostValues();
+      const svg = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
+      svg.setAttribute('width', '0'); svg.setAttribute('height', '0');
+      svg.setAttribute('style', 'position:absolute;width:0;height:0;overflow:hidden');
+      svg.innerHTML = '<filter id="kth-ans-boost" color-interpolation-filters="sRGB"><feComponentTransfer>' +
+        '<feFuncR type="linear" slope="' + b.colorScale + '"/><feFuncG type="linear" slope="' + b.colorScale + '"/>' +
+        '<feFuncB type="linear" slope="' + b.colorScale + '"/><feFuncA type="gamma" amplitude="1" exponent="' + b.alphaExp + '" offset="0"/>' +
+        '</feComponentTransfer></filter>';
+      document.body.appendChild(svg);
+    }
     function buildImageNode(pos, layerId, el, scale, opts) {
       const wrap = document.createElement('div');
       wrap.className = 'el-node el-image-wrap';
@@ -2036,7 +2059,12 @@
       if (el.opacity != null) wrap.style.opacity = el.opacity;
       const img = document.createElement('img');
       img.className = 'el-image'; img.src = Storage.normalizeAssetSrc(el.src); img.draggable = false;
-      if (el.brightness != null && el.brightness !== 1) img.style.filter = 'brightness(' + el.brightness + ')';
+      const filters = [];
+      // 교재 캡처 정답 오버레이(src에 /overlay/)는 원본 PNG를 그대로 두고 화면에 그릴 때만
+      // 진하게 보정한다(가장자리 반투명 픽셀 알파 끌어올림 + 색 진하게) — ensureAnswerBoostFilter 참고.
+      if (String(el.src || '').indexOf('/overlay/') !== -1) { ensureAnswerBoostFilter(); filters.push('url(#kth-ans-boost)'); }
+      if (el.brightness != null && el.brightness !== 1) filters.push('brightness(' + el.brightness + ')');
+      if (filters.length) img.style.filter = filters.join(' ');
       const rot = el.rotation || 0;
       const flipX = el.flipH ? -1 : 1, flipY = el.flipV ? -1 : 1;
       const scalePart = (flipX !== 1 || flipY !== 1) ? ' scale(' + flipX + ',' + flipY + ')' : '';
@@ -2482,8 +2510,96 @@
       }, { passive: false });
     }
 
+
+    // 손가락(터치) 제스처 — 두 손가락 = 핀치 확대/축소, 한 손가락 = 페이지 넘김 또는 화면 이동.
+    //  · 핀치 중에는 화면만 CSS로 미리 확대해 보여주고, 손을 떼면 opts.onZoom(새 배율, 기준점)으로
+    //    기존 확대 로직(배율 바꾸고 다시 그리기)을 한 번 탄다. 필기/도형은 페이지 좌표로 저장돼 있어 자동으로 따라간다.
+    //  · 한 손가락: 처음 10px 움직인 방향으로 축을 정한다. 넘김이 허용되면(opts.canSwipe — 필기 모드 꺼짐 +
+    //    페이지 폭이 화면 안에 들어옴) 가로로 임계값 이상 끌었을 때 opts.onSwipe(+1/-1). 그 외에는 스크롤(화면 이동).
+    //    세로는 세로로 넘칠 때 스크롤, 안 넘치면 넘김 허용 시 위/아래로 넘김.
+    //  · 두 번째 손가락이 닿는 순간 한 손가락 판정은 취소 — 핀치하다 페이지가 넘어가지 않는다.
+    //  · 펜/마우스 입력은 건드리지 않는다(필기는 기존 그대로). 손가락은 원래 필기에 쓰이지 않는다.
+    function initTouchNav(containerEl, opts) {
+      const touches = new Map(); // pointerId -> {x,y}
+      let single = null;  // {x0,y0,lastX,lastY,axis,sl,st}
+      let pinch = null;   // {d0,zoom0,scale,midX,midY}
+      let pinchLock = false; // 핀치 후 남은 손가락은 모두 뗄 때까지 무시
+      const SWIPE_FRAC = 0.15, SWIPE_MIN = 80, AXIS_PX = 10;
+      function pinchTargets() { return Array.from(containerEl.children).filter(c => c.nodeType === 1); }
+      function applyPreview(scale, midX, midY) {
+        pinchTargets().forEach(c => {
+          const r = c.getBoundingClientRect();
+          c.style.transformOrigin = (midX - r.left) + 'px ' + (midY - r.top) + 'px';
+          c.style.transform = 'scale(' + scale + ')';
+        });
+      }
+      function clearPreview() { pinchTargets().forEach(c => { c.style.transform = ''; c.style.transformOrigin = ''; }); }
+      function dist(a, b) { return Math.hypot(a.x - b.x, a.y - b.y); }
+      function startPinch() {
+        const [a, b] = Array.from(touches.values());
+        pinch = { d0: Math.max(10, dist(a, b)), zoom0: opts.getZoom(), scale: 1, midX: (a.x + b.x) / 2, midY: (a.y + b.y) / 2 };
+        single = null; pinchLock = true;
+      }
+      containerEl.addEventListener('pointerdown', e => {
+        if (e.pointerType !== 'touch') return;
+        touches.set(e.pointerId, { x: e.clientX, y: e.clientY });
+        if (touches.size >= 2) { if (!pinch && opts.canZoom && opts.canZoom()) startPinch(); return; }
+        if (pinchLock) return;
+        single = { x0: e.clientX, y0: e.clientY, lastX: e.clientX, lastY: e.clientY, axis: null };
+      });
+      containerEl.addEventListener('pointermove', e => {
+        if (e.pointerType !== 'touch' || !touches.has(e.pointerId)) return;
+        touches.set(e.pointerId, { x: e.clientX, y: e.clientY });
+        if (pinch && touches.size >= 2) {
+          const [a, b] = Array.from(touches.values());
+          const z0 = pinch.zoom0, s = Math.max(25 / z0, Math.min(400 / z0, dist(a, b) / pinch.d0));
+          pinch.scale = s; pinch.midX = (a.x + b.x) / 2; pinch.midY = (a.y + b.y) / 2;
+          applyPreview(s, pinch.midX, pinch.midY);
+          return;
+        }
+        if (!single || pinchLock) return;
+        const dx = e.clientX - single.x0, dy = e.clientY - single.y0;
+        if (!single.axis) {
+          if (Math.abs(dx) < AXIS_PX && Math.abs(dy) < AXIS_PX) return;
+          single.axis = Math.abs(dx) >= Math.abs(dy) ? 'x' : 'y';
+        }
+        const mx = e.clientX - single.lastX, my = e.clientY - single.lastY;
+        single.lastX = e.clientX; single.lastY = e.clientY;
+        const overX = containerEl.scrollWidth > containerEl.clientWidth + 2;
+        const overY = containerEl.scrollHeight > containerEl.clientHeight + 2;
+        if (single.axis === 'x' && overX) containerEl.scrollLeft -= mx;
+        if (single.axis === 'y' && overY) containerEl.scrollTop -= my;
+      });
+      function endPointer(e) {
+        if (e.pointerType !== 'touch' || !touches.has(e.pointerId)) return;
+        touches.delete(e.pointerId);
+        if (pinch && touches.size < 2) {
+          const p = pinch; pinch = null; clearPreview();
+          const newZoom = Math.round(Math.max(25, Math.min(400, p.zoom0 * p.scale)));
+          if (newZoom !== p.zoom0 && opts.onZoom) opts.onZoom(newZoom, { x: p.midX, y: p.midY, ratio: newZoom / p.zoom0 });
+        }
+        if (touches.size === 0) {
+          pinchLock = false;
+          const sw = single; single = null;
+          if (!sw || !sw.axis || e.type === 'pointercancel') return;
+          if (!opts.canSwipe || !opts.canSwipe()) return;
+          const dx = e.clientX - sw.x0, dy = e.clientY - sw.y0;
+          const overY = containerEl.scrollHeight > containerEl.clientHeight + 2;
+          if (sw.axis === 'x') {
+            const th = Math.max(SWIPE_MIN, containerEl.clientWidth * SWIPE_FRAC);
+            if (Math.abs(dx) >= th && opts.onSwipe) opts.onSwipe(dx < 0 ? 1 : -1);
+          } else if (!overY) {
+            const th = Math.max(SWIPE_MIN, containerEl.clientHeight * SWIPE_FRAC);
+            if (Math.abs(dy) >= th && opts.onSwipe) opts.onSwipe(dy < 0 ? 1 : -1);
+          }
+        }
+      }
+      containerEl.addEventListener('pointerup', endPointer);
+      containerEl.addEventListener('pointercancel', endPointer);
+    }
+
     return {
-      mountPage, redrawPage, drawElementOverlay, setPenModeClasses, unmountAll, templateBackground, initWheelNav,
+      mountPage, redrawPage, drawElementOverlay, setPenModeClasses, unmountAll, templateBackground, initWheelNav, initTouchNav,
       clearSelection, getSelection, deleteSelectedGroup, TEXT_FONT_FAMILIES,
       getPageSize1: pos => { const c = document.getElementById('ink-' + pos); const scale = mounted[pos] ? mounted[pos].scale : 1; return c ? { w: c.width / scale, h: c.height / scale } : { w: 600, h: 800 }; }
     };
