@@ -1,5 +1,7 @@
 // subjects/science/science-data.js
-// 과학 전용 큐레이션 데이터 — 교재 목록/목차/요점정리. bookId는 항상 PDF 파일명(확장자 제외).
+// 과학 전용 큐레이션 데이터 — 교재 목록/목차/요점정리. bookId는 보통 PDF 파일명(확장자 제외)이지만,
+// kind:'image' 항목(교재 낱장 캡처 원본+정답오버레이, R2의 JPG/PNG 시퀀스)은 bookId를 직접 명시한다
+// (일어 japanese-data.js와 같은 구조, 설계: DESIGN-image-capture-viewer.md).
 // AnnotationEngine과는 무관한 순수 콘텐츠 데이터라 여기 과목 폴더에 둔다.
 
 // pdf/kumon-science-*.pdf 4개를 인식해서 자료실 목록에 그대로 노출한다.
@@ -8,8 +10,9 @@ const MATERIALS = [
   { file: 'kumon-science-G-001-010.pdf', subject: '과학', stage: 'G', range: 'G1~G10', icon: '🔬', category: 'textbook', label: 'G단계 교재 (G1~G10)', archived: true }, // 초기 샘플(구방식) — PAGE_MAPS/SUMMARY 데이터는 보존, 화면에서만 숨김(2026-10-11)
   { file: 'kumon-science-G-041-050.pdf', subject: '과학', stage: 'G', range: 'G41~G50', icon: '🌱', category: 'textbook', label: 'G단계 교재 (G41~G50)', unit: '지권의 변화 5 · 풍화', archived: true }, // 초기 샘플(구방식) — PAGE_MAPS/SUMMARY 데이터는 보존, 화면에서만 숨김(2026-10-11)
   { file: 'kumon-science-H-101-110.pdf', subject: '과학', stage: 'H', range: 'H101~H110', icon: '⚛️', category: 'textbook', label: 'H단계 교재 (H101~H110)', archived: true }, // 초기 샘플(구방식) — 자료실 화면에서 숨김(2026-10-11)
+  { bookId: 'kumon-science-001-3A', kind: 'image', subject: '과학', stage: '3A', range: '1~200장', icon: '🔬', category: 'textbook', label: '3A단계 교재 원본+정답 (전체 200장)' },
 ];
-function bookIdOf(material) { return material.file.replace(/\.pdf$/i, ''); }
+function bookIdOf(material) { return material.bookId || material.file.replace(/\.pdf$/i, ''); }
 function materialByBookId(bookId) { return MATERIALS.find(m => bookIdOf(m) === bookId) || null; }
 
 // 교재별 페이지 지도(PDF 실제 페이지 번호 → 표시 라벨). bookId 키로 직접 저장한다 —
@@ -64,6 +67,23 @@ const PAGE_MAPS = {
     { pdf: 20, label: 'G 50b', sub: '지권의 변화 5 · 풍화 — 풍화 종합 정리 ②', type: 'content', edu: 50 },
   ],
 };
+
+// kumon-science-001-3A(과학 3A, 200장=400면, 1a,1b,2a,2b...200a,200b) — 일어 이미지북과 같은 방식으로
+// 매 페이지 "{장번호}{a|b}" 라벨을 기계적으로 생성한다.
+(function buildS001Page3AMap() {
+  const TOTAL_SHEETS = 200; // 업로드 스크립트 콘솔 출력(2026-10-17) 기준 — 바뀌면 여기만 고칠 것
+  const SIDES = ['a', 'b'];
+  const entries = [];
+  let pdfPage = 0;
+  for (let sheet = 1; sheet <= TOTAL_SHEETS; sheet++) {
+    for (const side of SIDES) {
+      pdfPage++;
+      const label = sheet + side;
+      entries.push({ pdf: pdfPage, label, sub: '3A ' + label, type: 'content' });
+    }
+  }
+  PAGE_MAPS['kumon-science-001-3A'] = entries;
+})();
 
 const SUMMARY = {
   'kumon-science-G-041-050': {
