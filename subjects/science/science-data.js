@@ -12,6 +12,7 @@ const MATERIALS = [
   { file: 'kumon-science-H-101-110.pdf', subject: '과학', stage: 'H', range: 'H101~H110', icon: '⚛️', category: 'textbook', label: 'H단계 교재 (H101~H110)', archived: true }, // 초기 샘플(구방식) — 자료실 화면에서 숨김(2026-10-11)
   { bookId: 'kumon-science-001-3A', kind: 'image', subject: '과학', stage: '3A', range: '1~200장', icon: '🔬', category: 'textbook', label: '3A단계 교재 원본+정답 (전체 200장)' },
   { bookId: 'kumon-science-002-2A', kind: 'image', subject: '과학', stage: '2A', range: '1~200장', icon: '🔬', category: 'textbook', label: '2A단계 교재 원본+정답 (전체 200장)' },
+  { bookId: 'kumon-science-003-A', kind: 'image', subject: '과학', stage: 'A', range: '1~200장', icon: '🔬', category: 'textbook', label: 'A단계 교재 원본+정답 (전체 200장)' },
 ];
 function bookIdOf(material) { return material.bookId || material.file.replace(/\.pdf$/i, ''); }
 function materialByBookId(bookId) { return MATERIALS.find(m => bookIdOf(m) === bookId) || null; }
@@ -100,6 +101,22 @@ const PAGE_MAPS = {
     }
   }
   PAGE_MAPS['kumon-science-002-2A'] = entries;
+})();
+
+// kumon-science-003-A(과학 A, 200장=400면, 1a,1b,2a,2b...200a,200b) — 위와 동일한 방식.
+(function buildS003PageAMap() {
+  const TOTAL_SHEETS = 200; // 업로드 스크립트 콘솔 출력(2026-10-17) 기준 — 바뀌면 여기만 고칠 것
+  const SIDES = ['a', 'b'];
+  const entries = [];
+  let pdfPage = 0;
+  for (let sheet = 1; sheet <= TOTAL_SHEETS; sheet++) {
+    for (const side of SIDES) {
+      pdfPage++;
+      const label = sheet + side;
+      entries.push({ pdf: pdfPage, label, sub: 'A ' + label, type: 'content' });
+    }
+  }
+  PAGE_MAPS['kumon-science-003-A'] = entries;
 })();
 
 const SUMMARY = {
