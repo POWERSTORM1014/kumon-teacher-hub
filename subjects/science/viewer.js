@@ -763,13 +763,14 @@ function initSidebarResizer() {
   resizer.addEventListener('pointerup', endDrag); resizer.addEventListener('pointercancel', endDrag);
 }
 function goToPage(p) {
-  curPage = Math.max(1, Math.min(totalPg, p)); renderPages();
+  curPage = Math.max(1, Math.min(totalPg, p)); const rendered = renderPages();
   // 필기 모드가 켜진 채로 다른 페이지로 넘어가면, 잠금도 새 페이지를 따라간다 —
   // 이전 페이지 잠금은 풀고 새 페이지를 잠근다(둘 다 보유하면 다른 기기 편집을 과도하게 막음).
   if (Engine.Tools.isPenMode()) {
     const nextPage = currentLockPageId();
     if (nextPage !== lockedPage) { releaseCurrentLock(); acquireLockForCurrentPage(false); }
   }
+  return rendered; // 렌더 완료를 기다려야 하는 호출부(손가락 넘김 후 맨 위로 등)용
 }
 function goToPdfPage(pdfNum) { goToPage(Engine.PageOrder.findPosByPdfPage(pdfNum)); }
 function initWheelPageNav() {
@@ -789,7 +790,7 @@ function initTouchPageNav() {
     getZoom: () => zoom,
     canZoom: () => hasDoc(),
     canSwipe: () => hasDoc() && !Engine.Tools.isPenMode() && main.scrollWidth <= main.clientWidth + 2,
-    onSwipe: dir => goToPage(curPage + dir),
+    onSwipe: async dir => { await goToPage(curPage + dir); main.scrollTop = 0; main.scrollLeft = 0; }, // 넘긴 페이지는 맨 위부터
     onZoom: async (newZoom, focal) => {
       const r = main.getBoundingClientRect();
       const fx = focal.x - r.left, fy = focal.y - r.top;
