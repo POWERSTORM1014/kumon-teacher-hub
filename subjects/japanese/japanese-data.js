@@ -10,6 +10,7 @@
 // 설계: DESIGN-image-capture-viewer.md
 const MATERIALS = [
   { file: 'kumon-japanese-C-171-180.pdf', subject: '일본어', stage: 'C', range: 'C171~C180', icon: '🇯🇵', category: 'textbook', label: 'C단계 교재 (C171~C180)', archived: true }, // 초기 샘플(구방식) — 실제 C단계 작업은 kind:'image' bookId로 별도 등록. 자료실 화면에서 숨김(2026-10-11)
+  { bookId: 'kumon-japanese-001-4A', kind: 'image', subject: '일본어', stage: '4A', range: '1~200장', icon: '🇯🇵', category: 'textbook', label: '4A단계 교재 원본+정답 (전체 200장)' },
   { bookId: 'kumon-japanese-002-3A', kind: 'image', subject: '일본어', stage: '3A', range: '1~200장', icon: '🇯🇵', category: 'textbook', label: '3A단계 교재 원본+정답 (전체 200장)' },
   { bookId: 'kumon-japanese-003-2A', kind: 'image', subject: '일본어', stage: '2A', range: '1~200장', icon: '🇯🇵', category: 'textbook', label: '2A단계 교재 원본+정답 (전체 200장)' },
   { bookId: 'kumon-japanese-004-A', kind: 'image', subject: '일본어', stage: 'A', range: '1~200장', icon: '🇯🇵', category: 'textbook', label: 'A단계 교재 원본+정답 (전체 200장)' },
@@ -34,6 +35,24 @@ function materialByBookId(bookId) { return MATERIALS.find(m => bookIdOf(m) === b
 // pdfPageLabel()/findPosByPdfPage()/검색/북마크 목록 등 PDF용으로 이미 있던 코드를
 // 그대로 재사용할 수 있다(이미지인지 PDF인지는 PageOrder 엔트리의 kind로만 구분).
 const PAGE_MAPS = {};
+
+// kumon-japanese-001-4A(일어 4A, 200장=400면, 1a,1b,2a,2b...200a,200b) — 캡처
+// 업로드 스크립트가 보고한 totalPages(200)·sides(a,b) 그대로 기계적으로 생성한다.
+// 손으로 400줄을 쓰는 대신 매 페이지 "{장번호}{a|b}"로 라벨을 계산한다.
+(function buildJ001Page4AMap() {
+  const TOTAL_SHEETS = 200; // 업로드 스크립트 콘솔 출력(2026-10-17) 기준 — 바뀌면 여기만 고칠 것
+  const SIDES = ['a', 'b'];
+  const entries = [];
+  let pdfPage = 0;
+  for (let sheet = 1; sheet <= TOTAL_SHEETS; sheet++) {
+    for (const side of SIDES) {
+      pdfPage++;
+      const label = sheet + side;
+      entries.push({ pdf: pdfPage, label, sub: '4A ' + label, type: 'content' });
+    }
+  }
+  PAGE_MAPS['kumon-japanese-001-4A'] = entries;
+})();
 
 // kumon-japanese-002-3A(일어 3A, 200장=400면, 1a,1b,2a,2b...200a,200b) — 캡처
 // 업로드 스크립트가 보고한 totalPages(200)·sides(a,b) 그대로 기계적으로 생성한다.
