@@ -485,7 +485,7 @@ function showOfflineUnavailable(m) {
   document.getElementById('offline-unavail-modal').classList.add('open');
 }
 function closeOfflineUnavailable() { document.getElementById('offline-unavail-modal').classList.remove('open'); pendingOfflineMaterial = null; }
-function retryOfflineMaterial() { const m = pendingOfflineMaterial; closeOfflineUnavailable(); if (m) openMaterial(m.file); }
+function retryOfflineMaterial() { const m = pendingOfflineMaterial; closeOfflineUnavailable(); if (m) openMaterial(m.file || bookIdOf(m)); }
 
 /* ══ 썸네일 / 목차 ══════════════════════════════════════ */
 async function buildThumbs() {
@@ -1792,5 +1792,5 @@ function openFromDeepLink() {
   if (!bid) return;
   const m = materialByBookId(bid);
   if (!m) return;
-  openMaterial(m.file).then(() => { if (page) goToPdfPage(page); });
+  openMaterial(m.file || bookIdOf(m)).then(() => { if (page) goToPdfPage(page); }); // 이미지북(kind:'image')은 file이 없어 bookId로 연다
 }
