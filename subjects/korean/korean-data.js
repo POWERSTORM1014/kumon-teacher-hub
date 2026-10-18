@@ -8,12 +8,29 @@
 const MATERIALS = [
   { file: 'kumon-korean-E1-101-110.pdf', subject: '국어', stage: 'E1', range: 'E1-101~110', icon: '📖', category: 'textbook', label: 'E1단계 교재 (101~110)', archived: true }, // 초기 샘플(구방식) — 자료실 화면에서 숨김(2026-10-11)
   { file: 'kumon-korean-G1-041-050.pdf', subject: '국어', stage: 'G1', range: 'G1-041~050', icon: '📚', category: 'textbook', label: 'G1단계 교재 (041~050)', archived: true }, // 초기 샘플(구방식) — 자료실 화면에서 숨김(2026-10-11)
+  { bookId: 'kumon-korean-008-A1', kind: 'image', subject: '국어', stage: 'A1', range: '1~200장', icon: '📖', category: 'textbook', label: 'A1단계 교재 원본+정답 (전체 200장)' },
 ];
-function bookIdOf(material) { return material.file.replace(/\.pdf$/i, ''); }
+function bookIdOf(material) { return material.bookId || material.file.replace(/\.pdf$/i, ''); }
 function materialByBookId(bookId) { return MATERIALS.find(m => bookIdOf(m) === bookId) || null; }
 
 // 교재별 페이지 지도(PDF 실제 페이지 번호 → 표시 라벨) — 아직 정리된 게 없음.
 const PAGE_MAPS = {};
+
+// kumon-korean-008-A1(국어 A1, 200장=400면, 1a,1b,2a,2b...200a,200b) — 과학/일어와 같은 방식.
+(function buildK008PageA1Map() {
+  const TOTAL_SHEETS = 200; // 업로드 스크립트 콘솔 출력(2026-10-18) 기준 — 바뀌면 여기만 고칠 것
+  const SIDES = ['a', 'b'];
+  const entries = [];
+  let pdfPage = 0;
+  for (let sheet = 1; sheet <= TOTAL_SHEETS; sheet++) {
+    for (const side of SIDES) {
+      pdfPage++;
+      const label = sheet + side;
+      entries.push({ pdf: pdfPage, label, sub: 'A1 ' + label, type: 'content' });
+    }
+  }
+  PAGE_MAPS['kumon-korean-008-A1'] = entries;
+})();
 
 // PAGE_MAPS에서 검색 인덱스를 자동 생성 — PAGE_MAPS가 채워지는 순간 검색도 자동으로 살아난다.
 function buildSearchIndex() {
