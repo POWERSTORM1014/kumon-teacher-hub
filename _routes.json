@@ -1,0 +1,6 @@
+{
+  "version": 1,
+  "description": "Pages Functions는 /api/*, /files/* 요청만 가로채고 나머지는 전부 정적 파일로 서빙한다.",
+  "include": ["/api/*", "/files/*"],
+  "exclude": []
+}

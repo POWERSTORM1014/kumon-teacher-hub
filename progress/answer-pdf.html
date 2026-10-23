@@ -166,7 +166,8 @@
   // ---- 데이터 읽기: kumon-teacher-hub API(/api/answer-pdf-progress), 패스프레이즈는
   // 캡처 진행·해답지 정답입력 진행과 같은 것(CAPTURE_PASSPHRASE)을 그대로 쓴다.
   var WORKERS_API_URL = 'https://kumon-teacher-hub-api.kumon-teacher-hub-api.workers.dev/api/';
-  var API_BASE_URL = (location.hostname === 'localhost' || location.hostname === '127.0.0.1') ? '../api/' : WORKERS_API_URL;
+  var API_BASE_URL = (location.hostname === 'localhost' || location.hostname === '127.0.0.1') ? '../api/'
+    : (location.hostname.endsWith('.pages.dev') ? '/api/' : WORKERS_API_URL);
   var KEY = 'kth-capture-passphrase';
   var reloadBtn = document.getElementById('reload');
   var logoutBtn = document.getElementById('logout');

@@ -273,7 +273,8 @@
   // 로컬(server.js)에서는 같은 사이트의 api/, 그 외(GitHub Pages)에서는 Cloudflare Worker —
   // shared/annotation-engine.js의 API_BASE_URL과 같은 규칙.
   var WORKERS_API_URL = 'https://kumon-teacher-hub-api.kumon-teacher-hub-api.workers.dev/api/';
-  var API_BASE_URL = (location.hostname === 'localhost' || location.hostname === '127.0.0.1') ? '../api/' : WORKERS_API_URL;
+  var API_BASE_URL = (location.hostname === 'localhost' || location.hostname === '127.0.0.1') ? '../api/'
+    : (location.hostname.endsWith('.pages.dev') ? '/api/' : WORKERS_API_URL);
   var KEY = 'kth-capture-passphrase';
   var reloadBtn = document.getElementById('reload');
   var logoutBtn = document.getElementById('logout');

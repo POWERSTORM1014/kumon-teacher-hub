@@ -38,9 +38,14 @@
   // 동일하게 맞춰져 있으므로(예: /api/layers/:pageId), 아래 API_BASE_URL 뒤에
   // 이어붙이는 나머지 코드는 어느 쪽을 향하는지 신경 쓸 필요가 없다.
   const WORKERS_API_URL = 'https://kumon-teacher-hub-api.kumon-teacher-hub-api.workers.dev/api/';
+  // *.pages.dev(Cloudflare Pages Functions 백엔드)는 프론트엔드와 같은 출처이므로
+  // 상대경로 /api/를 쓴다 — Cloudflare Access 보호 하에서 크로스오리진 fetch에
+  // credentials를 따로 붙일 필요가 없어진다(검증 완료, kumon-access-r2-worker-protection-validated
+  // 메모리 참고). GitHub Pages 등 그 외 배포 환경은 지금까지처럼 Workers 절대경로를 그대로 쓴다.
   const API_BASE_URL = (function () {
     const h = location.hostname;
     if (h === 'localhost' || h === '127.0.0.1') return SITE_ROOT + 'api/';
+    if (h.endsWith('.pages.dev')) return '/api/';
     return WORKERS_API_URL;
   })();
   console.log('[kumon] API_BASE_URL =', API_BASE_URL);
@@ -2762,7 +2767,11 @@
   // 교재 원본 PDF는 Cloudflare R2(공개 버킷)에서 서빙한다. 이 상수 하나가 유일한
   // 설정 지점이다 — 커스텀 도메인으로 옮기거나 다른 저장소로 바꿀 때 여기만 고치면
   // 7개 과목 뷰어 전체에 그대로 반영된다. 절대 이 URL을 다른 파일에 직접 적지 말 것.
-  const PDF_BASE_URL = 'https://pub-2c7274e37bd74104881b4f0c725f33c0.r2.dev/';
+  // *.pages.dev에서는 Pages Functions의 R2 프록시 경로(/files/pdf/, /files/captures/)를
+  // 쓴다 — Access 보호가 R2 공개 r2.dev 도메인에는 직접 걸리지 않기 때문에(검증 완료),
+  // 반드시 같은 출처의 Worker/Functions를 거쳐야 보호가 적용된다. 그 외 배포 환경은
+  // 지금까지처럼 공개 r2.dev URL을 그대로 쓴다.
+  const PDF_BASE_URL = location.hostname.endsWith('.pages.dev') ? '/files/pdf/' : 'https://pub-2c7274e37bd74104881b4f0c725f33c0.r2.dev/';
   function pdfUrl(filename) { return PDF_BASE_URL + filename; }
 
   // 교재 낱장 캡처(원본+정답오버레이) 이미지는 PDF와 별도인 전용 공개 R2 버킷에서
@@ -2771,7 +2780,7 @@
   // pathToken은 책마다 발급되는 추측 불가능한 접근 제한용 값(imagebook:<bookId> 메타
   // 데이터에 포함, 반드시 그 메타데이터를 먼저 조회해서 얻어야 함). 상세:
   // DESIGN-image-capture-viewer.md
-  const CAPTURES_BASE_URL = 'https://pub-f6db5a787c604d65916b9791cc7aa24a.r2.dev/';
+  const CAPTURES_BASE_URL = location.hostname.endsWith('.pages.dev') ? '/files/captures/' : 'https://pub-f6db5a787c604d65916b9791cc7aa24a.r2.dev/';
   function captureUrl(bookId, pathToken, kind, fileBase) {
     return CAPTURES_BASE_URL + bookId + '/' + pathToken + '/' + kind + '/' + fileBase;
   }
