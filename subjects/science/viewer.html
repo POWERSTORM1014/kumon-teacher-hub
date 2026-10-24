@@ -224,9 +224,9 @@ body{font-family:var(--font);background:var(--bg);color:var(--ink);height:100vh;
 .sb-sync.saving{color:var(--accent);background:var(--accent-light);}
 .sb-sync.offline{color:var(--ink-light);background:var(--bg);}
 
-#bookmark-modal,#layer-panel{position:fixed;top:0;right:0;bottom:0;z-index:500;display:none;pointer-events:none;}
-#layer-panel{z-index:700;}
-#bookmark-modal.open,#layer-panel.open{display:flex;}
+#bookmark-modal,#layer-panel,#search-panel{position:fixed;top:0;right:0;bottom:0;z-index:500;display:none;pointer-events:none;}
+#layer-panel,#search-panel{z-index:700;}
+#bookmark-modal.open,#layer-panel.open,#search-panel.open{display:flex;}
 .bm-box,.lp-box{pointer-events:auto;background:var(--surface);border-radius:16px 0 0 16px;width:min(340px,88vw);height:100%;display:flex;flex-direction:column;box-shadow:var(--shadow-lg);}
 .lp-box{width:min(360px,92vw);}
 .bm-hdr,.lp-hdr{padding:16px 18px 12px;border-bottom:1px solid var(--border);display:flex;align-items:center;justify-content:space-between;flex-shrink:0;}
@@ -317,6 +317,13 @@ body{font-family:var(--font);background:var(--bg);color:var(--ink);height:100vh;
 .pdf-snav{padding:4px 9px;border-radius:6px;border:1px solid var(--border);background:none;color:var(--ink-mid);cursor:pointer;font-size:12px;}
 .pdf-snav:hover{background:var(--accent);color:#fff;border-color:var(--accent);}
 .pdf-sclose{padding:4px 7px;border:none;background:none;color:var(--ink-light);cursor:pointer;font-size:14px;}
+.sp-page-banner{display:none;align-items:center;justify-content:center;gap:8px;padding:8px 40px 8px 14px;background:rgba(232,64,28,0.07);border-bottom:1px solid var(--border);font-size:12px;color:var(--ink);flex-shrink:0;position:relative;text-align:center;}
+.sp-page-banner.show{display:flex;}
+.sp-page-banner mark{background:rgba(232,64,28,0.25);color:var(--accent);border-radius:2px;}
+.sp-page-banner-text{line-height:1.5;}
+.sp-page-banner-close{position:absolute;right:10px;top:50%;transform:translateY(-50%);border:none;background:none;color:var(--ink-light);cursor:pointer;font-size:13px;flex-shrink:0;}
+.ms-sr-item.cur{background:var(--accent-light);border-left:3px solid var(--accent);}
+.ms-sr-item.cur .ms-sr-page{background:var(--accent);color:#fff;}
 
 #offline-unavail-modal{position:fixed;inset:0;z-index:900;background:rgba(0,0,0,0.55);display:none;align-items:center;justify-content:center;padding:16px;}
 #offline-unavail-modal.open{display:flex;}
@@ -367,6 +374,7 @@ body{font-family:var(--font);background:var(--bg);color:var(--ink);height:100vh;
         <button class="ms-search-clear" id="ms-clear-btn" onclick="msClearSearch()">✕</button>
         <div class="ms-search-results" id="ms-search-results" style="display:none;"></div>
       </div>
+      <div id="ms-search-hint" style="font-size:11px;color:var(--ink-light);padding:4px 10px 0;"></div>
     </div>
     <div class="ms-sub-tabs" id="ms-sub-tabs">
       <div class="ms-sub-tab on" id="ms-sub-textbook" onclick="switchSubTab('textbook')">교재</div>
@@ -465,6 +473,11 @@ body{font-family:var(--font);background:var(--bg);color:var(--ink);height:100vh;
       <button class="pt-tool" id="pt-save" onclick="manualSaveNow()" title="지금 바로 저장">💾</button>
     </div>
 
+    <div class="sp-page-banner" id="sp-page-banner">
+      <span>📄 이 페이지에서 찾은 문장:</span>
+      <span class="sp-page-banner-text" id="sp-page-banner-text"></span>
+      <button class="sp-page-banner-close" onclick="document.getElementById('sp-page-banner').classList.remove('show')">✕</button>
+    </div>
     <div class="viewer-body">
       <div class="sidebar" id="sidebar"><div id="thumb-list"></div></div>
       <div class="sidebar-resizer" id="sidebar-resizer"></div>
@@ -501,6 +514,26 @@ body{font-family:var(--font);background:var(--bg);color:var(--ink);height:100vh;
       <div class="lp-device-warning" id="lp-device-warning"></div>
       <div class="lp-section">이 페이지의 백업</div>
       <div id="lp-backup-list"></div>
+    </div>
+  </div>
+</div>
+
+<!-- 교재 내용 검색 패널 — 레이어 패널과 같은 고정 사이드 패널 방식. 페이지를 넘기거나
+     결과를 클릭해도 패널이 안 닫혀서, 검색 리스트를 계속 보면서 여러 결과를 차례로
+     확인할 수 있다(레이어 패널처럼 pdf-search-bar(진짜 PDF 전용, 이미지북엔 무용지물)와는
+     별개 — 이미지북 볼 때 vt-pdfsearch-btn이 이 패널을 연다). -->
+<div id="search-panel">
+  <div class="lp-box">
+    <div class="lp-hdr"><div class="lp-title">🔍 검색 결과</div><button class="lp-close" onclick="closeSearchPanel()">✕</button></div>
+    <div class="lp-body" style="padding:0;">
+      <div style="padding:14px 18px 10px;">
+        <div class="ms-search-wrap">
+          <span class="ms-search-icon">🔍</span>
+          <input class="ms-search-input" id="sp-search-input" placeholder="단원명, 학습 내용 검색..." oninput="spSearchLive(this.value)" onkeydown="if(event.key==='Escape') this.blur();">
+        </div>
+        <div id="sp-search-hint" style="font-size:11px;color:var(--ink-light);padding:4px 2px 0;"></div>
+      </div>
+      <div id="sp-results"></div>
     </div>
   </div>
 </div>

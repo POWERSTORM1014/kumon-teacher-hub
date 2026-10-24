@@ -260,11 +260,28 @@ async function openMyFile(id) {
   } catch (e) { hideBookLoadingOverlay(); showToast('PDF 로드 실패: ' + e.message); }
 }
 
-/* ══ 검색 (PAGE_MAPS 기반 자동 생성 인덱스) ══════════════════ */
+/* ══ 검색 (PAGE_MAPS 기반 라벨 검색 + 본문 내용 검색) ══════════════════
+   라벨 검색(SEARCH_INDEX)은 기존 그대로. 본문 검색은 _search-index/{과목}.json을
+   첫 검색 시 1회만 fetch해서 캐싱해두고(_contentIndexCache), 이후 입력마다 그 캐시의
+   text와 가볍게 대조한다. 색인 파일이 아직 없는 과목(국어/일어, 전사 전)에서는 fetch가
+   404로 실패하므로 그 경우 조용히 라벨 검색만 보여준다(에러로 취급 안 함) — 이렇게
+   하면 과목마다 "지원 여부" 문구를 따로 안 고쳐도, 색인 파일이 나중에 올라오는 순간
+   자동으로 본문 검색도 같이 켜진다. */
+let _contentIndexCache = null;      // null=아직 시도 안 함, []=시도했지만 실패(색인 없음), [...]=로드 완료
+let _contentIndexPromise = null;
+function loadContentIndex() {
+  if (_contentIndexPromise) return _contentIndexPromise;
+  _contentIndexPromise = fetch('../../_search-index/' + CURRENT_SUBJECT_ID + '.json', { cache: 'no-store' })
+    .then(res => { if (!res.ok) throw new Error('no index'); return res.json(); })
+    .then(data => { _contentIndexCache = Array.isArray(data) ? data : []; return _contentIndexCache; })
+    .catch(() => { _contentIndexCache = []; return _contentIndexCache; });
+  return _contentIndexPromise;
+}
 function msSearchLive(val) {
   clearTimeout(searchTimer);
   document.getElementById('ms-clear-btn').style.display = val ? '' : 'none';
   if (!val.trim()) { document.getElementById('ms-search-results').style.display = 'none'; return; }
+  loadContentIndex(); // 입력 시작하면 바로 백그라운드 로딩 시작(검색 결과 렌더는 debounce 뒤에)
   searchTimer = setTimeout(() => showSearchResults(val), 200);
 }
 function msClearSearch() {
@@ -272,28 +289,193 @@ function msClearSearch() {
   document.getElementById('ms-search-results').style.display = 'none';
   document.getElementById('ms-clear-btn').style.display = 'none';
 }
-function showSearchResults(query) {
-  const q = query.toLowerCase().trim();
-  const results = SEARCH_INDEX.filter(item => item.keywords.includes(q)).slice(0, 8);
-  const box = document.getElementById('ms-search-results');
-  if (!results.length) { box.innerHTML = '<div class="ms-no-result">🔍 "' + query + '" 검색 결과 없음</div>'; }
-  else {
-    box.innerHTML = results.map(r => {
-      const hl = r.label.replace(new RegExp(q.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), 'gi'), m => '<mark>' + m + '</mark>');
-      const m = materialByBookId(r.bookId);
-      return `<div class="ms-sr-item" onclick="jumpToIndexPage('${r.bookId}',${r.pdfPage})">
-        <div class="ms-sr-page">${m ? m.range : ''}</div>
-        <div class="ms-sr-text">${hl}<br><span style="font-size:11px;color:var(--ink-light);">${r.sub}</span></div>
-      </div>`;
-    }).join('');
-  }
-  box.style.display = '';
+function escapeHtml(s) {
+  return String(s).replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 }
-function jumpToIndexPage(bid, pdfPage) {
+// onclick="jumpToIndexPage('bookId', pdf, 'query')" 속성 안에 검색어를 안전하게 끼워 넣는다
+// — JS 문자열(작은따옴표 이스케이프)과 HTML 속성(큰따옴표 이스케이프) 양쪽 다 깨지면 안 됨.
+function escapeJsAttr(s) {
+  return String(s).replace(/\\/g, '\\\\').replace(/'/g, "\\'").replace(/"/g, '&quot;').replace(/\n/g, ' ');
+}
+// 라벨 검색 결과 렌더 — 자료실 검색창과 뷰어 내 검색 패널이 공유한다. query를 같이 넘겨서,
+// 결과를 클릭해 페이지로 이동할 때 검색 패널도 같은 검색어로 자동으로 열리게 한다
+// (jumpToIndexPage 참고) — 자료실에서 검색→이동해도 다시 검색어를 입력할 필요가 없다.
+function renderLabelResults(labelResults, esc, query) {
+  const qAttr = escapeJsAttr(query);
+  return labelResults.map(r => {
+    const hl = r.label.replace(new RegExp(esc, 'gi'), m => '<mark>' + m + '</mark>');
+    const m = materialByBookId(r.bookId);
+    return `<div class="ms-sr-item" data-book="${r.bookId}" data-pdf="${r.pdfPage}" onclick="jumpToIndexPage('${r.bookId}',${r.pdfPage},'${qAttr}')">
+      <div class="ms-sr-page">${m ? m.range : ''}</div>
+      <div class="ms-sr-text">${hl}<br><span style="font-size:11px;color:var(--ink-light);">${r.sub}</span></div>
+    </div>`;
+  }).join('');
+}
+// 검색어 글자 사이에 공백이 있든 없든 본문과 매칭되게 한다(예: "포화상태"로 입력해도
+// 본문에 "포화 상태"로 띄어쓰기 돼 있으면 찾아야 함) — 글자마다 \s*를 끼워 넣은 느슨한
+// 정규식을 쓴다. 매칭 안 되면 null. matchContentResults(목록 렌더)와 현재 페이지 배너
+// (refreshSearchPanelCurrent)가 같이 쓴다.
+// 매치 위치를 기준으로 "문장" 경계(. ? ! 뒤 공백, 또는 줄바꿈)까지 앞뒤로 넓혀서 돌려준다
+// — 글자수로 뚝 자르면 문장이 중간에서 끊겨 어색해서, 완결된 문장 단위로 보여준다.
+// 문장부호가 아예 없는 긴 구간(표를 한 줄로 옮긴 경우 등)에 걸리면 너무 길어지므로
+// 안전장치로 일정 길이 넘으면 예전처럼 글자수 기준으로 되돌린다.
+function extractSentence(text, idx, matchLen) {
+  const before = text.slice(0, idx);
+  const after = text.slice(idx + matchLen);
+  const starts = [...before.matchAll(/[.?!](?=\s|$)|\n/g)];
+  const start = starts.length ? starts[starts.length - 1].index + starts[starts.length - 1][0].length : 0;
+  const endMatch = after.match(/[.?!](?=\s|$)|\n/);
+  const end = endMatch ? (idx + matchLen + endMatch.index + (endMatch[0] === '\n' ? 0 : 1)) : text.length;
+  const sentence = text.slice(start, end).trim();
+  // start/end는 항상 문장부호·줄바꿈 바로 뒤/앞(또는 글 맨 처음·끝)이라, 이 경우는 이미
+  // 완결된 문장이다 — 말줄임표를 붙이면 안 된다(실제로 안 잘렸는데 잘린 것처럼 보이는 버그였음).
+  if (sentence.length > 0 && sentence.length <= 140) return { text: sentence, prefix: '', suffix: '' };
+  // 안전장치: 문장이 너무 길거나(140자 초과) 못 찾았으면 매치 앞뒤 글자수로만 자른다
+  // (이때만 실제로 중간이 잘리므로 말줄임표가 맞다).
+  const s = Math.max(0, idx - 15), e = idx + matchLen + 25;
+  return { text: text.slice(s, e).replace(/\n/g, ' '), prefix: s > 0 ? '…' : '', suffix: e < text.length ? '…' : '' };
+}
+function buildSnippet(text, q) {
+  const flexSrc = q.split('').map(ch => ch.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')).join('\\s*');
+  const flexRe = new RegExp(flexSrc, 'i');
+  const flexReG = new RegExp(flexSrc, 'gi');
+  const m0 = text.match(flexRe);
+  if (!m0) return null;
+  const { text: sentence, prefix, suffix } = extractSentence(text, m0.index, m0[0].length);
+  const snippet = prefix + sentence + suffix;
+  return escapeHtml(snippet).replace(flexReG, mm => '<mark>' + mm + '</mark>');
+}
+// 반환: {ready:false}=이 과목은 아직 본문 색인이 없음(조용히 무시), {ready:true, html}=완료.
+async function matchContentResults(q, excludeKeys) {
+  const index = await loadContentIndex();
+  if (!index.length) return { ready: false, html: '' };
+  const qAttr = escapeJsAttr(q);
+  const seen = new Set(excludeKeys);
+  const items = [];
+  for (const item of index) {
+    if (items.length >= 8) break;
+    const key = item.bookId + '|' + item.pdfPage;
+    if (seen.has(key)) continue; // 라벨 검색에 이미 뜬 페이지는 중복 표시 안 함
+    const hl = buildSnippet(item.text, q);
+    if (hl === null) continue;
+    seen.add(key);
+    const m = materialByBookId(item.bookId);
+    items.push(`<div class="ms-sr-item" data-book="${item.bookId}" data-pdf="${item.pdfPage}" onclick="jumpToIndexPage('${item.bookId}',${item.pdfPage},'${qAttr}')">
+      <div class="ms-sr-page">${m ? m.range : ''}</div>
+      <div class="ms-sr-text">${hl}<br><span style="font-size:11px;color:var(--ink-light);">${item.stage} ${item.label} · 본문 일치</span></div>
+    </div>`);
+  }
+  const html = items.length ? '<div class="ms-sr-group-label" style="padding:6px 12px;font-size:11px;color:var(--ink-light);">📄 본문 일치</div>' + items.join('') : '';
+  return { ready: true, html };
+}
+async function showSearchResults(query) {
+  const q = query.toLowerCase().trim();
+  const esc = q.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  const labelResults = SEARCH_INDEX.filter(item => item.keywords.includes(q)).slice(0, 8);
+  const box = document.getElementById('ms-search-results');
+  const labelHtml = renderLabelResults(labelResults, esc, q);
+  box.innerHTML = labelHtml || '<div class="ms-no-result">🔍 "' + escapeHtml(query) + '" 검색 결과 없음</div>';
+  box.style.display = '';
+
+  // 본문 검색은 비동기라 늦게 도착한다 — 그 사이 사용자가 입력을 바꾸면 이 결과를 버린다.
+  const { ready, html: contentHtml } = await matchContentResults(q, labelResults.map(r => r.bookId + '|' + r.pdfPage));
+  if (document.getElementById('ms-search-input').value.toLowerCase().trim() !== q) return;
+  if (!ready) return; // 이 과목은 아직 본문 색인이 없음 — 조용히 라벨 검색만 유지
+  if (contentHtml) box.innerHTML = labelHtml + contentHtml;
+  else if (!labelResults.length) box.innerHTML = '<div class="ms-no-result">🔍 "' + escapeHtml(query) + '" 검색 결과 없음</div>';
+}
+
+/* ══ 뷰어 내 검색 패널(레이어 패널과 동일한 고정 사이드 패널) ══════════════
+   교재를 이미 연 상태에서도 검색하고, 결과를 클릭해 페이지를 이동해도 패널이 닫히지
+   않아 계속 다음 결과를 이어서 클릭할 수 있다. 이미지북(캡처 교재) 볼 때는 원래
+   먹통이던 togglePdfSearch()의 "🔍 검색" 버튼이 이 패널을 열도록 아래에서 바꾼다
+   (진짜 PDF 전용 pdf-search-bar는 이미지북엔 애초에 텍스트 레이어가 없어 못 씀). */
+let spSearchTimer = null;
+function openSearchPanel() {
+  document.getElementById('search-panel').classList.add('open');
+  setTimeout(() => document.getElementById('sp-search-input').focus(), 100);
+}
+function closeSearchPanel() {
+  document.getElementById('search-panel').classList.remove('open');
+}
+// 지금 보고 있는 페이지와 일치하는 검색 결과 항목을 강조(왼쪽 썸네일의 현재 페이지
+// 표시와 같은 역할)하고, 그 페이지 본문에서 실제로 매칭된 문장을 상단 배너로 보여준다.
+// goToPage()(페이지 넘길 때마다)와 spShowSearchResults(검색 결과 새로 그릴 때) 둘 다에서 부른다.
+function refreshSearchPanelCurrent() {
+  const panel = document.getElementById('search-panel');
+  const banner = document.getElementById('sp-page-banner');
+  if (!panel || !panel.classList.contains('open')) { if (banner) banner.classList.remove('show'); return; }
+  const entry = Engine.PageOrder.getOrderEntry(curPage);
+  const curPdfPage = entry ? entry.pdfPage : null;
+
+  let matched = null;
+  document.querySelectorAll('#sp-results .ms-sr-item').forEach(el => {
+    const isCur = !!bookId && curPdfPage != null && el.dataset.book === bookId && Number(el.dataset.pdf) === curPdfPage;
+    el.classList.toggle('cur', isCur);
+    if (isCur) matched = el;
+  });
+  if (matched) matched.scrollIntoView({ block: 'center' });
+
+  const bannerText = document.getElementById('sp-page-banner-text');
+  const input = document.getElementById('sp-search-input');
+  const q = input ? input.value.toLowerCase().trim() : '';
+  if (!q || !bookId || curPdfPage == null || !_contentIndexCache || !_contentIndexCache.length) {
+    if (banner) banner.classList.remove('show');
+    return;
+  }
+  const pageEntry = _contentIndexCache.find(it => it.bookId === bookId && it.pdfPage === curPdfPage);
+  const hl = pageEntry ? buildSnippet(pageEntry.text, q) : null;
+  if (hl && banner && bannerText) { bannerText.innerHTML = hl; banner.classList.add('show'); }
+  else if (banner) { banner.classList.remove('show'); }
+}
+function spSearchLive(val) {
+  clearTimeout(spSearchTimer);
+  if (!val.trim()) { document.getElementById('sp-results').innerHTML = ''; return; }
+  loadContentIndex();
+  spSearchTimer = setTimeout(() => spShowSearchResults(val), 200);
+}
+async function spShowSearchResults(query) {
+  const q = query.toLowerCase().trim();
+  const esc = q.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  const labelResults = SEARCH_INDEX.filter(item => item.keywords.includes(q)).slice(0, 8);
+  const box = document.getElementById('sp-results');
+  const labelHtml = renderLabelResults(labelResults, esc, q);
+  box.innerHTML = labelHtml || '<div class="ms-no-result">🔍 "' + escapeHtml(query) + '" 검색 결과 없음</div>';
+
+  refreshSearchPanelCurrent(); // 라벨 결과만으로도 일단 현재 페이지 강조/배너 갱신
+
+  const { ready, html: contentHtml } = await matchContentResults(q, labelResults.map(r => r.bookId + '|' + r.pdfPage));
+  const curInput = document.getElementById('sp-search-input');
+  if (!curInput || curInput.value.toLowerCase().trim() !== q) return;
+  if (!ready) return;
+  if (contentHtml) box.innerHTML = labelHtml + contentHtml;
+  else if (!labelResults.length) box.innerHTML = '<div class="ms-no-result">🔍 "' + escapeHtml(query) + '" 검색 결과 없음</div>';
+  refreshSearchPanelCurrent();
+}
+// 이 과목에 본문 색인(_search-index/{과목}.json)이 아예 없을 때만(=전사 전) 한 번
+// 조용히 안내한다 — 색인이 생기면 자동으로 안 뜨므로 과목마다 문구를 따로 안 고쳐도 됨.
+loadContentIndex().then(index => {
+  if (index.length) return;
+  const msg = '현재 과학 과목만 학습 내용 검색을 지원합니다(다른 과목은 추후 추가 예정)';
+  const hint1 = document.getElementById('ms-search-hint'); if (hint1) hint1.textContent = msg;
+  const hint2 = document.getElementById('sp-search-hint'); if (hint2) hint2.textContent = msg;
+}).catch(() => {});
+function jumpToIndexPage(bid, pdfPage, query) {
   document.getElementById('ms-search-results').style.display = 'none';
   const m = materialByBookId(bid);
   if (!m) return;
-  openMaterial(m.file || bookIdOf(m)).then(() => { goToPdfPage(pdfPage); showToast('📖 이동'); });
+  openMaterial(m.file || bookIdOf(m)).then(() => {
+    goToPdfPage(pdfPage);
+    showToast('📖 이동');
+    // 자료실에서 검색→이동한 경우(query 있음) 뷰어에 들어간 뒤에도 검색 결과를 계속
+    // 볼 수 있게 검색 패널을 같은 검색어로 자동으로 열어준다 — 이미지북이 아니면(실제
+    // PDF 자료 등) 이 패널 자체를 안 쓰므로 조건부로만 연다.
+    if (query && imageBookMeta) {
+      openSearchPanel();
+      const input = document.getElementById('sp-search-input');
+      if (input) { input.value = query; spShowSearchResults(query); }
+    }
+  });
 }
 document.addEventListener('click', e => { if (!e.target.closest('.ms-search-wrap')) document.getElementById('ms-search-results').style.display = 'none'; });
 
@@ -779,6 +961,7 @@ function initSidebarResizer() {
 }
 function goToPage(p) {
   curPage = Math.max(1, Math.min(totalPg, p)); const rendered = renderPages();
+  refreshSearchPanelCurrent(); // 검색 패널이 열려 있으면 현재 페이지 강조·일치 문장 배너를 갱신
   // 필기 모드가 켜진 채로 다른 페이지로 넘어가면, 잠금도 새 페이지를 따라간다 —
   // 이전 페이지 잠금은 풀고 새 페이지를 잠근다(둘 다 보유하면 다른 기기 편집을 과도하게 막음).
   if (Engine.Tools.isPenMode()) {
@@ -1507,6 +1690,13 @@ function renderBookmarkList() {
 
 /* ══ PDF 텍스트 검색 ══════════════════════════════════════ */
 function togglePdfSearch() {
+  // 이미지북(캡처 교재)은 PDF 텍스트 레이어가 없어서 pdf-search-bar가 원래 무용지물이었다
+  // — 그 자리에 본문 검색 패널을 대신 연다. 진짜 PDF 교재는 기존 동작 그대로.
+  if (imageBookMeta) {
+    const panel = document.getElementById('search-panel');
+    if (panel.classList.contains('open')) closeSearchPanel(); else openSearchPanel();
+    return;
+  }
   const bar = document.getElementById('pdf-search-bar');
   const show = bar.classList.toggle('show');
   if (show) setTimeout(() => document.getElementById('pdf-search-inp').focus(), 100); else closePdfSearch();
