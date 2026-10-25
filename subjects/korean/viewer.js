@@ -200,13 +200,13 @@ function renderList() {
   if (stageFilter !== 'all') items = items.filter(m => m.stage === stageFilter);
   if (!items.length) { list.innerHTML = '<div class="ms-empty">📂 해당 자료가 없습니다</div>'; return; }
   list.innerHTML = items.map(m => `
-    <div class="ms-item">
+    <div class="ms-item ms-item-clickable" onclick="openMaterial('${m.file || bookIdOf(m)}')">
       <div class="ms-item-icon">${m.icon || '📄'}</div>
       <div class="ms-item-info">
         <div class="ms-item-subject">${m.subject} ${m.stage}단계 · ${m.label}</div>
         <div class="ms-item-sub">${m.range}${m.unit ? ' · ' + m.unit : ''}</div>
       </div>
-      <div class="ms-item-actions"><button class="ms-view-btn" onclick="openMaterial('${m.file || bookIdOf(m)}')">보기</button></div>
+      <div class="ms-item-actions"><button class="ms-view-btn">보기</button></div>
     </div>`).join('');
 }
 function getMyFiles() { try { return JSON.parse(localStorage.getItem('ann:myfiles') || '[]'); } catch (e) { return []; } }
@@ -951,8 +951,16 @@ function triggerImageInsert() {
 function readFileAsDataUrl(file) { return new Promise((resolve, reject) => { const r = new FileReader(); r.onload = () => resolve(r.result); r.onerror = () => reject(r.error); r.readAsDataURL(file); }); }
 
 /* ══ 레이어 패널 ══════════════════════════════════════════ */
+// 레이어·목차 패널은 같은 우측 고정 영역을 공유하는 "탭"처럼 동작해야 한다 — 하나를
+// 열 때 다른 패널을 먼저 닫지 않으면, 둘 다 열린 상태로 쌓여서 새로 누른 탭이 아니라
+// 먼저 열렸던 패널이 계속 보이는 것처럼 보인다.
+function closeAllSidePanels() {
+  closeLayerPanel();
+  closeBookmark();
+}
 function openLayerPanel() {
   if (!bookId) { showToast('먼저 교재를 열어주세요'); return; }
+  closeAllSidePanels();
   renderLayerPanel();
   document.getElementById('lp-device-input').value = Engine.Device.getLabel();
   updateDeviceWarning();
@@ -1463,7 +1471,7 @@ function initSpectrumEvents() {
 }
 
 /* ══ 목차 ═════════════════════════════════════════════════ */
-function openBookmark() { document.getElementById('bookmark-modal').classList.add('open'); renderBookmarkList(); }
+function openBookmark() { closeAllSidePanels(); document.getElementById('bookmark-modal').classList.add('open'); renderBookmarkList(); }
 function closeBookmark() { document.getElementById('bookmark-modal').classList.remove('open'); }
 function renderBookmarkList() {
   const list = document.getElementById('bm-list');

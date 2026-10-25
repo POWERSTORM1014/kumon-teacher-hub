@@ -200,13 +200,13 @@ function renderList() {
   if (stageFilter !== 'all') items = items.filter(m => m.stage === stageFilter);
   if (!items.length) { list.innerHTML = '<div class="ms-empty">📂 해당 자료가 없습니다</div>'; return; }
   list.innerHTML = items.map(m => `
-    <div class="ms-item">
+    <div class="ms-item ms-item-clickable" onclick="openMaterial('${m.file || bookIdOf(m)}')">
       <div class="ms-item-icon">${m.icon || '📄'}</div>
       <div class="ms-item-info">
         <div class="ms-item-subject">${m.subject} ${m.stage}단계 · ${m.label}</div>
         <div class="ms-item-sub">${m.range}${m.unit ? ' · ' + m.unit : ''}</div>
       </div>
-      <div class="ms-item-actions"><button class="ms-view-btn" onclick="openMaterial('${m.file || bookIdOf(m)}')">보기</button></div>
+      <div class="ms-item-actions"><button class="ms-view-btn">보기</button></div>
     </div>`).join('');
 }
 function getMyFiles() { try { return JSON.parse(localStorage.getItem('ann:myfiles') || '[]'); } catch (e) { return []; } }
@@ -277,6 +277,115 @@ function loadContentIndex() {
     .catch(() => { _contentIndexCache = []; return _contentIndexCache; });
   return _contentIndexPromise;
 }
+// "단계별 흐름" 개념 카드(_search-index/{과목}-concepts.json) — 교재 원문 발췌(지어내지
+// 않음) + 제가 직접 쓴 흐름 해설 + 인터넷에서 찾은 참고자료로 구성된, 미리 만들어둔
+// 데이터다(검색할 때마다 실시간으로 AI를 호출하는 게 아니라, 검색어가 미리 골라둔
+// 핵심 개념과 일치할 때만 이 카드를 보여준다 — 비용 없이 즉시 응답). 색인 파일이 없는
+// 과목/아직 안 고른 단어는 조용히 무시되고 평소 검색만 동작한다.
+let _conceptIndexCache = null;
+let _conceptIndexPromise = null;
+function loadConceptIndex() {
+  if (_conceptIndexPromise) return _conceptIndexPromise;
+  _conceptIndexPromise = fetch('../../_search-index/' + CURRENT_SUBJECT_ID + '-concepts.json', { cache: 'no-store' })
+    .then(res => { if (!res.ok) throw new Error('no concepts'); return res.json(); })
+    .then(data => { _conceptIndexCache = Array.isArray(data) ? data : []; return _conceptIndexCache; })
+    .catch(() => { _conceptIndexCache = []; return _conceptIndexCache; });
+  return _conceptIndexPromise;
+}
+// 목차(북마크) 패널용 제목·미리보기(_search-index/{과목}-toc.json) — build_toc.py가
+// 교재 원문에서 그대로 뽑아낸 것(지어낸 내용 없음). { bookId: { label: {title, preview} } }
+// 구조라 책이 바뀔 때마다 다시 fetch할 필요 없이 한 번만 받아 전체를 캐싱해둔다.
+let _tocIndexCache = null;
+let _tocIndexPromise = null;
+function loadTocIndex() {
+  if (_tocIndexPromise) return _tocIndexPromise;
+  _tocIndexPromise = fetch('../../_search-index/' + CURRENT_SUBJECT_ID + '-toc.json', { cache: 'no-store' })
+    .then(res => { if (!res.ok) throw new Error('no toc'); return res.json(); })
+    .then(data => { _tocIndexCache = data && typeof data === 'object' ? data : {}; return _tocIndexCache; })
+    .catch(() => { _tocIndexCache = {}; return _tocIndexCache; });
+  return _tocIndexPromise;
+}
+// 목차 패널 "단원별 보기"용 커리큘럼 맵(_search-index/{과목}-unitmap.json). 이미 전사된
+// 텍스트에서 단원(대략 10쪽 단위) 경계를 찾아 학습목표·학습내용·핵심포인트를 사람이 직접
+// 쓴 것(지어낸 내용 없음) — { bookId: [ {num,title,start,end,estimated,objective,content,
+// keypoints}, ... ] } 구조. toc와 마찬가지로 한 번만 받아 캐싱.
+let _unitmapIndexCache = null;
+let _unitmapIndexPromise = null;
+function loadUnitmapIndex() {
+  if (_unitmapIndexPromise) return _unitmapIndexPromise;
+  _unitmapIndexPromise = fetch('../../_search-index/' + CURRENT_SUBJECT_ID + '-unitmap.json', { cache: 'no-store' })
+    .then(res => { if (!res.ok) throw new Error('no unitmap'); return res.json(); })
+    .then(data => { _unitmapIndexCache = data && typeof data === 'object' ? data : {}; return _unitmapIndexCache; })
+    .catch(() => { _unitmapIndexCache = {}; return _unitmapIndexCache; });
+  return _unitmapIndexPromise;
+}
+// "용어정리" 패널용 사전(_search-index/{과목}-glossary.json). build_glossary.py가
+// 교재가 "~(이)라고 한다/말한다/의미한다"처럼 실제로 용어를 정의하는 문장을 찾아
+// source:"textbook"으로 만든 것 + merge_glossary_ai.py가 교재 문맥을 근거로 제가
+// 직접 정리해 덧붙인 source:"ai" 항목. 배열 하나를 한 번만 받아 전체 캐싱해둔다.
+let _glossaryIndexCache = null;
+let _glossaryIndexPromise = null;
+function loadGlossaryIndex() {
+  if (_glossaryIndexPromise) return _glossaryIndexPromise;
+  _glossaryIndexPromise = fetch('../../_search-index/' + CURRENT_SUBJECT_ID + '-glossary.json', { cache: 'no-store' })
+    .then(res => { if (!res.ok) throw new Error('no glossary'); return res.json(); })
+    .then(data => { _glossaryIndexCache = Array.isArray(data) ? data : []; return _glossaryIndexCache; })
+    .catch(() => { _glossaryIndexCache = []; return _glossaryIndexCache; });
+  return _glossaryIndexPromise;
+}
+// "끓는점이란?" "끓는점은 무엇인가요?" 같은 질문형 입력도 교재 본문 검색어("끓는점")로
+// 인식해서 찾아준다 — 실시간 AI 호출 없이 질문에서 흔히 쓰이는 어미/조사 패턴만 벗겨내는
+// 규칙이라서, 교재에 실제로 있는 내용인데도 "검색 결과 없음"으로 잘못 뜨는 경우를 줄인다.
+function stripQuestionForm(q) {
+  let s = q.trim();
+  s = s.replace(/[?？!！]+$/, '').trim();
+  s = s.replace(/(에\s*대해서?)?\s*(설명해\s*(주세요|줘)|알려\s*(주세요|줘)|말해\s*(주세요|줘))$/, '').trim();
+  s = s.replace(/((?:이)?란|라는\s*것|이|가|은|는)?\s*(무엇|뭐)(인가요|입니까|이야|이에요|예요|인지|이지|일까요|일까|지|야)?$/, '').trim();
+  s = s.replace(/((?:이)?란|라는\s*것)$/, '').trim();
+  return s;
+}
+function effectiveQuery(raw) {
+  const t = String(raw).toLowerCase().trim();
+  return stripQuestionForm(t) || t;
+}
+function findMatchingConcept(concepts, q) {
+  if (!q) return null;
+  for (const c of concepts) {
+    for (const kw of c.keywords) {
+      const kwNorm = kw.toLowerCase().replace(/\s+/g, '');
+      if (kwNorm === q.replace(/\s+/g, '') || kwNorm.includes(q.replace(/\s+/g, '')) || q.replace(/\s+/g, '').includes(kwNorm)) return c;
+    }
+  }
+  return null;
+}
+function renderConceptCard(c) {
+  const stagesHtml = c.stages.map(s => `
+    <div class="cc-stage-item" data-book="${s.bookId}" data-pdf="${s.pdfPage}" onclick="jumpToIndexPage('${s.bookId}',${s.pdfPage},'',true)">
+      <div class="cc-stage-badge">${escapeHtml(s.stage)}단계</div>
+      <div class="cc-stage-body">
+        <div class="cc-stage-excerpt">${escapeHtml(s.excerpt)}</div>
+        <div class="cc-stage-note">💡 ${escapeHtml(s.note)}</div>
+      </div>
+    </div>`).join('');
+  const sourcesHtml = (c.reference.sources || []).map(s => {
+    // 출처는 정확성을 위해 원문 제목(영어 포함)을 그대로 안 바꾸지만, 그것만 보면
+    // 맥락 없이 영어 링크만 떠서 혼란스럽다는 지적을 받아 한글 설명을 덧붙였다
+    // (titleKo). 영어 원문일 때만 "(영문)" 표시로 클릭 전에 미리 알 수 있게 한다.
+    const label = s.titleKo || s.title;
+    const enTag = s.lang === 'en' ? ' <span class="cc-source-lang">영문</span>' : '';
+    return `<a href="${escapeHtml(s.url)}" target="_blank" rel="noopener" class="cc-source-link">${escapeHtml(label)}${enTag}</a>`;
+  }).join('');
+  return `<div class="concept-card">
+    <div class="cc-title">🔗 ${escapeHtml(c.title)}</div>
+    <div class="cc-section-label">교재 원문 흐름(단계별)</div>
+    ${stagesHtml}
+    <div class="cc-section-label">🧠 AI 흐름 해설</div>
+    <div class="cc-synthesis">${escapeHtml(c.synthesis)}</div>
+    <div class="cc-section-label">📚 참고자료 — 인터넷 검색, 교재 내용 아님</div>
+    <div class="cc-reference">${escapeHtml(c.reference.text)}</div>
+    <div class="cc-sources">${sourcesHtml}</div>
+  </div>`;
+}
 function msSearchLive(val) {
   clearTimeout(searchTimer);
   document.getElementById('ms-clear-btn').style.display = val ? '' : 'none';
@@ -335,53 +444,138 @@ function extractSentence(text, idx, matchLen) {
   const s = Math.max(0, idx - 15), e = idx + matchLen + 25;
   return { text: text.slice(s, e).replace(/\n/g, ' '), prefix: s > 0 ? '…' : '', suffix: e < text.length ? '…' : '' };
 }
+// 검색어가 한 페이지에 여러 번 나올 때(제목 줄에도, 실제 정의 문장에도 등), 무조건
+// "처음 나오는 곳"을 미리보기로 보여주면 제목 줄처럼 알맹이 없는 문장이 뽑히는 경우가
+// 있다(예: "끓는점" 검색 시 H33a의 진짜 정의 문장 대신 "물질의 특성 1: 끓는점, 어는점,
+// 녹는점"이라는 제목이 뽑혔던 사례). 그래서 그 페이지 안의 모든 매치를 다 찾아서,
+// "~라고 한다/합니다"처럼 교재가 실제로 용어를 정의하는 문장을 우선적으로 고른다 —
+// 새 내용을 지어내는 게 아니라, 이미 있는 여러 문장 중 더 알맹이 있는 걸 고르는 것뿐이다.
+function scoreSnippetSentence(s) {
+  let score = 0;
+  if (/(이)?라고\s*(한다|합니다|부른다|부릅니다|칭한다)/.test(s)) score += 10; // "~라고 한다" 정의 문장
+  if (/[.?!]$/.test(s.trim())) score += 2; // 문장부호로 끝남 = 완결된 문장일 가능성
+  if (s.trim().length < 15) score -= 8; // 아주 짧음 = 제목 줄일 가능성
+  if (/^\d+\s/.test(s.trim())) score -= 3; // "1 다음 글을 읽고" 같은 지시문
+  return score;
+}
 function buildSnippet(text, q) {
   const flexSrc = q.split('').map(ch => ch.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')).join('\\s*');
   const flexRe = new RegExp(flexSrc, 'i');
   const flexReG = new RegExp(flexSrc, 'gi');
-  const m0 = text.match(flexRe);
-  if (!m0) return null;
-  const { text: sentence, prefix, suffix } = extractSentence(text, m0.index, m0[0].length);
-  const snippet = prefix + sentence + suffix;
+  const allMatches = [...text.matchAll(new RegExp(flexSrc, 'gi'))];
+  if (!allMatches.length) return null;
+  let best = null, bestScore = -Infinity;
+  for (const m of allMatches) {
+    const extracted = extractSentence(text, m.index, m[0].length);
+    const sc = scoreSnippetSentence(extracted.text);
+    if (sc > bestScore) { bestScore = sc; best = extracted; }
+  }
+  const snippet = best.prefix + best.text + best.suffix;
   return escapeHtml(snippet).replace(flexReG, mm => '<mark>' + mm + '</mark>');
+}
+// 본문 일치 목록은 "지금 보고 있는 단계"가 바뀔 때마다 그 단계 결과가 위로 오도록
+// 다시 정렬해서 보여준다(개념 카드와 같은 원칙) — 그래서 전체 매치를 한 번 다 모아
+// 두고(_lastContentMatchAll), 렌더링은 별도 함수(renderContentListHtml)로 분리해서
+// refreshSearchPanelCurrent()가 재정렬·재렌더만 가볍게 다시 할 수 있게 한다.
+let _lastContentMatchQuery = null;
+let _lastContentMatchAll = null;   // [{item, hl}], excludeKeys 적용 전 전체 매치(상한 30)
+let _lastContentExcludeKeys = null;
+let _lastStageFirstMatch = null;   // Map(bookId -> {item, hl}) — 단계별 대표 매치(상한 없음, 자동 흐름 카드용)
+function renderContentListHtml(all, excludeKeys, preferBookId) {
+  const seen = new Set(excludeKeys);
+  const pool = all.filter(({ item }) => !seen.has(item.bookId + '|' + item.pdfPage));
+  // 현재 보고 있는 단계(bookId)의 매치를 맨 앞으로 — 그 안에서는 원래 순서(페이지 순) 유지.
+  const sorted = preferBookId
+    ? [...pool.filter(({ item }) => item.bookId === preferBookId), ...pool.filter(({ item }) => item.bookId !== preferBookId)]
+    : pool;
+  const top = sorted.slice(0, 8);
+  if (!top.length) return '';
+  const items = top.map(({ item, hl }) => {
+    const qAttr = escapeJsAttr(_lastContentMatchQuery || '');
+    const m = materialByBookId(item.bookId);
+    return `<div class="ms-sr-item" data-book="${item.bookId}" data-pdf="${item.pdfPage}" onclick="jumpToIndexPage('${item.bookId}',${item.pdfPage},'${qAttr}')">
+      <div class="ms-sr-page">${m ? m.range : ''}</div>
+      <div class="ms-sr-text">${hl}<br><span style="font-size:11px;color:var(--ink-light);">${item.stage} ${item.label} · 본문 일치</span></div>
+    </div>`;
+  }).join('');
+  return items;
+}
+// 사람이 미리 골라둔 5개 핵심 개념(먹이사슬·자석·태양계·전류·광합성)처럼 AI 해설+
+// 인터넷 참고자료가 딸린 카드는 수작업으로 큐레이션한 것이라 모든 용어로 늘릴 수 없다.
+// 하지만 "검색어가 여러 단계에 걸쳐 교재에 나온다"는 사실 자체는 이미 있는 색인
+// 데이터만으로 즉석에서(추가 AI 호출·비용 없이) 보여줄 수 있다 — 그래서 큐레이션
+// 카드가 없는 검색어도, 2개 단계 이상에서 매치되면 교재 원문 발췌만으로 된 가벼운
+// "자동 흐름 카드"를 만든다. 해설·참고자료 없이 순수 원문 발췌뿐이라 지어낸 내용이
+// 전혀 없다. 한 단계에서만 나오면 "흐름"이라 할 게 없으므로 평소 목록으로 충분해 생략.
+function buildAutoFlowCard(q, stageFirstMap) {
+  if (!stageFirstMap || stageFirstMap.size < 2) return '';
+  const stages = [...stageFirstMap.values()].sort((a, b) => {
+    const na = parseInt(a.item.bookId.split('-')[2], 10);
+    const nb = parseInt(b.item.bookId.split('-')[2], 10);
+    return na - nb;
+  });
+  const stageItems = stages.map(({ item, hl }) => `
+    <div class="cc-stage-item" data-book="${item.bookId}" data-pdf="${item.pdfPage}" onclick="jumpToIndexPage('${item.bookId}',${item.pdfPage},'',true)">
+      <div class="cc-stage-badge">${escapeHtml(item.stage)}단계</div>
+      <div class="cc-stage-body">
+        <div class="cc-stage-excerpt">${hl}</div>
+      </div>
+    </div>`).join('');
+  return `<div class="concept-card concept-card-auto">
+    <div class="cc-title">📖 "${escapeHtml(q)}" — 단계별 교재 원문 흐름</div>
+    <div class="cc-section-label">교재 본문에서 자동으로 모음 · AI 해설·참고자료 없음</div>
+    ${stageItems}
+  </div>`;
 }
 // 반환: {ready:false}=이 과목은 아직 본문 색인이 없음(조용히 무시), {ready:true, html}=완료.
 async function matchContentResults(q, excludeKeys) {
   const index = await loadContentIndex();
   if (!index.length) return { ready: false, html: '' };
-  const qAttr = escapeJsAttr(q);
-  const seen = new Set(excludeKeys);
-  const items = [];
+  const flexSrc = q.split('').map(ch => ch.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')).join('\\s*');
+  const existsRe = new RegExp(flexSrc, 'i');
+  const all = [];                   // 평면 목록용(재정렬용으로 넉넉히 모으되 상한 30)
+  const stageFirst = new Map();     // bookId -> {item, hl}, 단계별 대표 매치(상한 없음)
+  // "동물"처럼 아주 흔한 단어는 상한 30 안이 전부 한두 단계(보통 가장 먼저 나오는
+  // 3A/2A)로 채워져 버려서, 실제로는 11개 단계 전부에 나오는데도 자동 흐름 카드가
+  // 전혀 안 뜨는 문제가 있었다 — 그래서 30개가 다 찬 뒤에도 전체 색인을 계속 훑되,
+  // 아직 대표 매치가 없는 단계만 추가로 확보한다(가벼운 존재 여부 검사만 하고,
+  // 실제로 필요한 경우에만 buildSnippet을 계산해 비용을 늘리지 않는다).
   for (const item of index) {
-    if (items.length >= 8) break;
-    const key = item.bookId + '|' + item.pdfPage;
-    if (seen.has(key)) continue; // 라벨 검색에 이미 뜬 페이지는 중복 표시 안 함
+    if (!existsRe.test(item.text)) continue;
+    const needAll = all.length < 30;
+    const needStage = !stageFirst.has(item.bookId);
+    if (!needAll && !needStage) continue;
     const hl = buildSnippet(item.text, q);
     if (hl === null) continue;
-    seen.add(key);
-    const m = materialByBookId(item.bookId);
-    items.push(`<div class="ms-sr-item" data-book="${item.bookId}" data-pdf="${item.pdfPage}" onclick="jumpToIndexPage('${item.bookId}',${item.pdfPage},'${qAttr}')">
-      <div class="ms-sr-page">${m ? m.range : ''}</div>
-      <div class="ms-sr-text">${hl}<br><span style="font-size:11px;color:var(--ink-light);">${item.stage} ${item.label} · 본문 일치</span></div>
-    </div>`);
+    if (needAll) all.push({ item, hl });
+    if (needStage) stageFirst.set(item.bookId, { item, hl });
   }
-  const html = items.length ? '<div class="ms-sr-group-label" style="padding:6px 12px;font-size:11px;color:var(--ink-light);">📄 본문 일치</div>' + items.join('') : '';
+  _lastContentMatchQuery = q;
+  _lastContentMatchAll = all;
+  _lastContentExcludeKeys = excludeKeys;
+  _lastStageFirstMatch = stageFirst;
+  const entry = Engine.PageOrder.getOrderEntry(curPage);
+  const curBookId = bookId;
+  const itemsHtml = renderContentListHtml(all, excludeKeys, curBookId);
+  const html = itemsHtml ? '<div class="ms-sr-group-label" style="padding:6px 12px;font-size:11px;color:var(--ink-light);">📄 본문 일치</div><div class="sp-content-list">' + itemsHtml + '</div>' : '';
   return { ready: true, html };
 }
 async function showSearchResults(query) {
-  const q = query.toLowerCase().trim();
+  const rawQ = query.toLowerCase().trim();
+  const q = effectiveQuery(rawQ); // "~이란?" 같은 질문형이면 "~이란?" 없이 핵심어만 검색어로 쓴다
+  const normNote = q !== rawQ ? '<div class="ms-sr-normalized-note">🔎 \'' + escapeHtml(q) + '\'(으)로 검색한 결과입니다</div>' : '';
   const esc = q.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
   const labelResults = SEARCH_INDEX.filter(item => item.keywords.includes(q)).slice(0, 8);
   const box = document.getElementById('ms-search-results');
   const labelHtml = renderLabelResults(labelResults, esc, q);
-  box.innerHTML = labelHtml || '<div class="ms-no-result">🔍 "' + escapeHtml(query) + '" 검색 결과 없음</div>';
+  box.innerHTML = labelHtml ? normNote + labelHtml : '<div class="ms-no-result">🔍 "' + escapeHtml(query) + '" 검색 결과 없음</div>';
   box.style.display = '';
 
   // 본문 검색은 비동기라 늦게 도착한다 — 그 사이 사용자가 입력을 바꾸면 이 결과를 버린다.
   const { ready, html: contentHtml } = await matchContentResults(q, labelResults.map(r => r.bookId + '|' + r.pdfPage));
-  if (document.getElementById('ms-search-input').value.toLowerCase().trim() !== q) return;
+  if (document.getElementById('ms-search-input').value.toLowerCase().trim() !== rawQ) return;
   if (!ready) return; // 이 과목은 아직 본문 색인이 없음 — 조용히 라벨 검색만 유지
-  if (contentHtml) box.innerHTML = labelHtml + contentHtml;
+  if (contentHtml) box.innerHTML = normNote + labelHtml + contentHtml;
   else if (!labelResults.length) box.innerHTML = '<div class="ms-no-result">🔍 "' + escapeHtml(query) + '" 검색 결과 없음</div>';
 }
 
@@ -391,12 +585,96 @@ async function showSearchResults(query) {
    먹통이던 togglePdfSearch()의 "🔍 검색" 버튼이 이 패널을 열도록 아래에서 바꾼다
    (진짜 PDF 전용 pdf-search-bar는 이미지북엔 애초에 텍스트 레이어가 없어 못 씀). */
 let spSearchTimer = null;
+// 레이어·검색·용어정리·목차 패널은 전부 같은 우측 고정 영역을 공유하는 "탭"처럼
+// 동작해야 한다 — 전에는 하나를 열어도 다른 패널이 안 닫혀서, 이미 열려 있던 패널이
+// 새로 누른 탭보다 쌓임 순서상 위에 남아 "탭을 눌러도 내용이 안 바뀌는" 것처럼
+// 보였다(사실은 안 바뀐 게 아니라 이전 패널이 가리고 있었던 것). 넷 중 하나를 열
+// 때마다 먼저 전부 닫고 시작하면 항상 방금 누른 탭의 내용만 보인다.
+function closeAllSidePanels() {
+  closeSearchPanel();
+  closeGlossaryPanel();
+  closeLayerPanel();
+  closeBookmark();
+  closeUnitmapPanel();
+}
 function openSearchPanel() {
+  closeAllSidePanels();
   document.getElementById('search-panel').classList.add('open');
   setTimeout(() => document.getElementById('sp-search-input').focus(), 100);
 }
 function closeSearchPanel() {
   document.getElementById('search-panel').classList.remove('open');
+}
+// "용어정리" 패널 — 지금 보고 있는 페이지의 본문에 포함된 사전 등록 용어를 나열한다.
+// 검색 패널과 달리 사용자 입력이 없어서, 열려 있는 동안은 goToPage()가 페이지를
+// 넘길 때마다 다시 그려서 항상 "지금 보는 페이지" 기준으로 유지한다(열려 있지 않으면
+// renderGlossaryPanel()이 아무 것도 안 하고 바로 리턴 — 쓸데없이 매번 다시 그리지 않음).
+function openGlossaryPanel() {
+  closeAllSidePanels();
+  document.getElementById('glossary-panel').classList.add('open');
+  renderGlossaryPanel();
+}
+function closeGlossaryPanel() {
+  document.getElementById('glossary-panel').classList.remove('open');
+}
+// "광합성" 안에 "합성"이 들어 있는 것처럼, 더 큰 한글 단어 속에 우연히 다른 사전
+// 용어가 통째로 끼어 있는 경우를 걸러낸다 — 매치 "앞" 글자가 한글이면(다른 단어의
+// 일부로 붙어 있는 것) 그 자리는 인정하지 않는다. 뒤쪽은 조사가 바로 붙는 게 정상
+// (예: "자석은")이라 검사하지 않는다.
+function findGlossaryTermInPage(text, term) {
+  let from = 0;
+  while (true) {
+    const idx = text.indexOf(term, from);
+    if (idx === -1) return -1;
+    const before = idx > 0 ? text[idx - 1] : '';
+    if (!/[가-힣]/.test(before)) return idx;
+    from = idx + 1;
+  }
+}
+function renderGlossaryPanel() {
+  const panel = document.getElementById('glossary-panel');
+  const box = document.getElementById('gp-results');
+  if (!panel || !panel.classList.contains('open')) return;
+  box.innerHTML = '<div class="gp-empty">불러오는 중...</div>';
+  Promise.all([loadGlossaryIndex(), loadContentIndex()]).then(([glossary, contentIndex]) => {
+    // 비동기로 로딩하는 사이에 패널이 닫혔거나 다른 페이지로 넘어갔을 수 있다 — 지금
+    // 다시 확인해서, 그 사이 최신 상태(curPage)를 기준으로 그린다(낡은 결과 방지).
+    if (!panel.classList.contains('open')) return;
+    if (!glossary.length) {
+      box.innerHTML = '<div class="gp-empty">📘 현재 과학 과목만 용어정리를 지원합니다(다른 과목은 추후 추가 예정)</div>';
+      return;
+    }
+    const entry = Engine.PageOrder.getOrderEntry(curPage);
+    const curPdfPage = entry ? entry.pdfPage : null;
+    if (!bookId || curPdfPage == null || !contentIndex.length) {
+      box.innerHTML = '<div class="gp-empty">📘 이 자료는 용어정리를 지원하지 않습니다.</div>';
+      return;
+    }
+    const pageEntry = contentIndex.find(it => it.bookId === bookId && it.pdfPage === curPdfPage);
+    if (!pageEntry) { box.innerHTML = '<div class="gp-empty">📘 이 페이지의 본문 데이터를 찾을 수 없습니다.</div>'; return; }
+    const text = pageEntry.text;
+    const found = glossary
+      .map(g => ({ g, idx: findGlossaryTermInPage(text, g.term) }))
+      .filter(x => x.idx !== -1)
+      .sort((a, b) => a.idx - b.idx); // 페이지에서 등장하는 순서대로
+    if (!found.length) {
+      box.innerHTML = '<div class="gp-empty">📘 이 페이지에는 사전에 등록된 핵심 용어가 없습니다.</div>';
+      return;
+    }
+    box.innerHTML = found.map(({ g }) => {
+      const badge = g.source === 'ai'
+        ? '<span class="gp-badge ai">AI 작성</span>'
+        : '<span class="gp-badge textbook">교재 원문</span>';
+      const isSamePage = g.bookId === bookId && g.pdfPage === curPdfPage;
+      const sourceLink = isSamePage ? '' :
+        `<a class="gp-source-link" onclick="jumpToIndexPage('${g.bookId}',${g.pdfPage},'')">📍 ${escapeHtml(g.stage)}단계 ${escapeHtml(g.label)}에서 정의됨 — 보러 가기</a>`;
+      return `<div class="gp-item">
+        <div class="gp-term-row"><span class="gp-term">${escapeHtml(g.term)}</span>${badge}</div>
+        <div class="gp-def">${escapeHtml(g.definition)}</div>
+        ${sourceLink}
+      </div>`;
+    }).join('');
+  });
 }
 // 지금 보고 있는 페이지와 일치하는 검색 결과 항목을 강조(왼쪽 썸네일의 현재 페이지
 // 표시와 같은 역할)하고, 그 페이지 본문에서 실제로 매칭된 문장을 상단 배너로 보여준다.
@@ -408,17 +686,39 @@ function refreshSearchPanelCurrent() {
   const entry = Engine.PageOrder.getOrderEntry(curPage);
   const curPdfPage = entry ? entry.pdfPage : null;
 
-  let matched = null;
-  document.querySelectorAll('#sp-results .ms-sr-item').forEach(el => {
+  // 평면 결과 목록(.ms-sr-item)뿐 아니라 개념 카드의 단계별 항목(.cc-stage-item)도
+  // 같이 강조한다(둘 다 같은 data-book/data-pdf 속성을 씀) — 카드의 대표 페이지와
+  // 목록의 항목이 우연히 같은 페이지일 수 있어서(흔함) 두 곳 다 동시에 "현재"로
+  // 표시될 수 있다. 다만 자동 스크롤·가운데 정렬은 "실제로 카드를 눌러서 왔을 때만"
+  // 한다 — data-book/data-pdf 일치 여부만으로는 목록 클릭인지 카드 클릭인지 구분이
+  // 안 돼서(같은 페이지를 가리킬 수 있으므로) jumpToIndexPage가 남겨둔 _lastJumpFromCard
+  // 플래그로 명확히 구분한다(목록 클릭 후에도 카드로 화면이 튀던 버그의 진짜 원인).
+  let matchedCardItem = null;
+  document.querySelectorAll('#sp-results .ms-sr-item, #sp-results .cc-stage-item').forEach(el => {
     const isCur = !!bookId && curPdfPage != null && el.dataset.book === bookId && Number(el.dataset.pdf) === curPdfPage;
     el.classList.toggle('cur', isCur);
-    if (isCur) matched = el;
+    if (isCur && el.classList.contains('cc-stage-item')) matchedCardItem = el;
   });
-  if (matched) matched.scrollIntoView({ block: 'center' });
+  if (matchedCardItem && _lastJumpFromCard) matchedCardItem.scrollIntoView({ block: 'center' });
+  _lastJumpFromCard = false; // 한 번 쓰고 나면 바로 꺼서, 이후 일반 페이지 넘김에는 영향 없게 한다
+
+  // "본문 일치" 평면 목록도 지금 보고 있는 단계(bookId) 매치가 위로 오도록 다시
+  // 정렬해서 다시 그린다 — 개념 카드를 눌러 다른 단계로 넘어가도 이 목록이 처음
+  // 검색했던 단계(보통 가장 먼저 매치된 단계)에 그대로 고정돼 있던 문제를 고친다.
+  const contentListEl = document.querySelector('#sp-results .sp-content-list');
+  const spInputEl = document.getElementById('sp-search-input');
+  const spInputVal = spInputEl ? effectiveQuery(spInputEl.value) : '';
+  if (contentListEl && _lastContentMatchAll && _lastContentMatchQuery === spInputVal) {
+    contentListEl.innerHTML = renderContentListHtml(_lastContentMatchAll, _lastContentExcludeKeys || [], bookId);
+    document.querySelectorAll('#sp-results .sp-content-list .ms-sr-item').forEach(el => {
+      const isCur = !!bookId && curPdfPage != null && el.dataset.book === bookId && Number(el.dataset.pdf) === curPdfPage;
+      el.classList.toggle('cur', isCur);
+    });
+  }
 
   const bannerText = document.getElementById('sp-page-banner-text');
   const input = document.getElementById('sp-search-input');
-  const q = input ? input.value.toLowerCase().trim() : '';
+  const q = input ? effectiveQuery(input.value) : '';
   if (!q || !bookId || curPdfPage == null || !_contentIndexCache || !_contentIndexCache.length) {
     if (banner) banner.classList.remove('show');
     return;
@@ -432,24 +732,44 @@ function spSearchLive(val) {
   clearTimeout(spSearchTimer);
   if (!val.trim()) { document.getElementById('sp-results').innerHTML = ''; return; }
   loadContentIndex();
+  loadConceptIndex();
   spSearchTimer = setTimeout(() => spShowSearchResults(val), 200);
 }
 async function spShowSearchResults(query) {
-  const q = query.toLowerCase().trim();
+  const rawQ = query.toLowerCase().trim();
+  const q = effectiveQuery(rawQ); // "~이란?" 같은 질문형이면 "~이란?" 없이 핵심어만 검색어로 쓴다
+  const normNote = q !== rawQ ? '<div class="ms-sr-normalized-note">🔎 \'' + escapeHtml(q) + '\'(으)로 검색한 결과입니다</div>' : '';
   const esc = q.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
   const labelResults = SEARCH_INDEX.filter(item => item.keywords.includes(q)).slice(0, 8);
   const box = document.getElementById('sp-results');
   const labelHtml = renderLabelResults(labelResults, esc, q);
-  box.innerHTML = labelHtml || '<div class="ms-no-result">🔍 "' + escapeHtml(query) + '" 검색 결과 없음</div>';
+  box.innerHTML = labelHtml ? normNote + labelHtml : '<div class="ms-no-result">🔍 "' + escapeHtml(query) + '" 검색 결과 없음</div>';
 
   refreshSearchPanelCurrent(); // 라벨 결과만으로도 일단 현재 페이지 강조/배너 갱신
 
+  // 미리 만들어둔 핵심 개념 카드(AI 분석+참고자료)와 일치하면 맨 위에 붙인다 — 실시간
+  // AI 호출이 아니라 정적 파일이라 비용·지연 없음. 일치하는 개념이 없으면 조용히 생략.
+  const concepts = await loadConceptIndex();
+  const curInput1 = document.getElementById('sp-search-input');
+  if (!curInput1 || curInput1.value.toLowerCase().trim() !== rawQ) return;
+  const concept = findMatchingConcept(concepts, q);
+  const conceptHtml = concept ? renderConceptCard(concept) : '';
+  if (conceptHtml) box.innerHTML = normNote + conceptHtml + (labelHtml || '');
+
   const { ready, html: contentHtml } = await matchContentResults(q, labelResults.map(r => r.bookId + '|' + r.pdfPage));
   const curInput = document.getElementById('sp-search-input');
-  if (!curInput || curInput.value.toLowerCase().trim() !== q) return;
-  if (!ready) return;
-  if (contentHtml) box.innerHTML = labelHtml + contentHtml;
-  else if (!labelResults.length) box.innerHTML = '<div class="ms-no-result">🔍 "' + escapeHtml(query) + '" 검색 결과 없음</div>';
+  if (!curInput || curInput.value.toLowerCase().trim() !== rawQ) return;
+  // 수작업으로 큐레이션한 카드가 없는 용어라도, 색인만으로 즉석에 만드는 "자동 흐름
+  // 카드"로 대신 보여준다(2개 단계 이상에서 매치될 때만 — 한 단계뿐이면 흐름이라 할
+  // 게 없어 평소 목록으로 충분하다). 큐레이션 카드가 있으면 그게 우선이다.
+  const topCardHtml = conceptHtml || (ready ? buildAutoFlowCard(q, _lastStageFirstMatch) : '');
+  if (!ready) {
+    if (topCardHtml) box.innerHTML = normNote + topCardHtml + (labelHtml || '');
+    return;
+  }
+  if (contentHtml) box.innerHTML = normNote + topCardHtml + labelHtml + contentHtml;
+  else if (!labelResults.length && !topCardHtml) box.innerHTML = '<div class="ms-no-result">🔍 "' + escapeHtml(query) + '" 검색 결과 없음</div>';
+  else if (topCardHtml) box.innerHTML = normNote + topCardHtml + (labelHtml || '');
   refreshSearchPanelCurrent();
 }
 // 이 과목에 본문 색인(_search-index/{과목}.json)이 아예 없을 때만(=전사 전) 한 번
@@ -460,7 +780,14 @@ loadContentIndex().then(index => {
   const hint1 = document.getElementById('ms-search-hint'); if (hint1) hint1.textContent = msg;
   const hint2 = document.getElementById('sp-search-hint'); if (hint2) hint2.textContent = msg;
 }).catch(() => {});
-function jumpToIndexPage(bid, pdfPage, query) {
+// fromCard: 개념 카드 항목을 눌러서 온 이동인지 구분하는 플래그. 카드의 대표 페이지와
+// 하단 "본문 일치" 목록의 항목이 우연히 같은 페이지를 가리킬 때(흔함 — 카드 발췌가
+// 보통 그 단계에서 가장 먼저/확실하게 매치되는 페이지라서), data-book/data-pdf만으로는
+// "카드 항목이 클릭된 것"과 "그 페이지를 가리키는 목록 항목이 클릭된 것"을 구분할 수
+// 없어서 카드 쪽으로 화면이 튀어버리는 버그가 있었다 — 그래서 클릭 출처를 직접 넘긴다.
+let _lastJumpFromCard = false;
+function jumpToIndexPage(bid, pdfPage, query, fromCard) {
+  _lastJumpFromCard = !!fromCard;
   document.getElementById('ms-search-results').style.display = 'none';
   const m = materialByBookId(bid);
   if (!m) return;
@@ -470,7 +797,12 @@ function jumpToIndexPage(bid, pdfPage, query) {
     // 자료실에서 검색→이동한 경우(query 있음) 뷰어에 들어간 뒤에도 검색 결과를 계속
     // 볼 수 있게 검색 패널을 같은 검색어로 자동으로 열어준다 — 이미지북이 아니면(실제
     // PDF 자료 등) 이 패널 자체를 안 쓰므로 조건부로만 연다.
-    if (query && imageBookMeta) {
+    // 단, 패널이 "이미" 열려 있는 상태(=패널 안의 카드/목록 항목을 눌러서 이동한 경우)라면
+    // 다시 열고 처음부터 그릴 필요가 없다 — 오히려 그 재렌더 때문에 스크롤 위치가
+    // 리셋돼서 "목록을 눌렀는데 상단 카드로 튄다"는 불편함이 생겼었다. goToPage()가
+    // 이미 refreshSearchPanelCurrent()로 강조·정렬만 가볍게 갱신해주므로 그걸로 충분하다.
+    const panelAlreadyOpen = document.getElementById('search-panel').classList.contains('open');
+    if (query && imageBookMeta && !panelAlreadyOpen) {
       openSearchPanel();
       const input = document.getElementById('sp-search-input');
       if (input) { input.value = query; spShowSearchResults(query); }
@@ -514,6 +846,7 @@ async function openMaterial(file) {
       if (!reachable) { showOfflineUnavailable(m); return; }
     }
     currentMaterial = m; currentIsCustom = false; bookId = bookIdOf(m);
+    bmExpandedUnits = new Set();
     showViewer();
     showBookLoadingOverlay();
     showToast('PDF 로딩 중...');
@@ -962,6 +1295,7 @@ function initSidebarResizer() {
 function goToPage(p) {
   curPage = Math.max(1, Math.min(totalPg, p)); const rendered = renderPages();
   refreshSearchPanelCurrent(); // 검색 패널이 열려 있으면 현재 페이지 강조·일치 문장 배너를 갱신
+  renderGlossaryPanel(); // 용어정리 패널이 열려 있으면 현재 페이지 기준으로 다시 그림
   // 필기 모드가 켜진 채로 다른 페이지로 넘어가면, 잠금도 새 페이지를 따라간다 —
   // 이전 페이지 잠금은 풀고 새 페이지를 잠근다(둘 다 보유하면 다른 기기 편집을 과도하게 막음).
   if (Engine.Tools.isPenMode()) {
@@ -1136,6 +1470,7 @@ function readFileAsDataUrl(file) { return new Promise((resolve, reject) => { con
 /* ══ 레이어 패널 ══════════════════════════════════════════ */
 function openLayerPanel() {
   if (!bookId) { showToast('먼저 교재를 열어주세요'); return; }
+  closeAllSidePanels();
   renderLayerPanel();
   document.getElementById('lp-device-input').value = Engine.Device.getLabel();
   updateDeviceWarning();
@@ -1646,9 +1981,27 @@ function initSpectrumEvents() {
 }
 
 /* ══ 목차 ═════════════════════════════════════════════════ */
-function openBookmark() { document.getElementById('bookmark-modal').classList.add('open'); renderBookmarkList(); }
+let bmMode = 'page'; // 'page' | 'unit' — 목차 패널을 페이지별 평면 목록으로 볼지, 단원별 묶음으로 볼지
+let bmExpandedUnits = new Set(); // 단원별 보기에서 펼쳐진 단원 번호(책이 바뀌면 리셋)
+function openBookmark() {
+  closeAllSidePanels();
+  document.getElementById('bookmark-modal').classList.add('open');
+  renderBookmarkList();
+  // 목차 제목·미리보기는 과목 전체 색인이라 다소 커서 비동기로 받는다 — 도착하면
+  // 목차가 열려 있는 동안만(닫혔으면 괜히 다시 그릴 필요 없음) 한 번 더 그려준다.
+  loadTocIndex().then(() => { if (document.getElementById('bookmark-modal').classList.contains('open')) renderBookmarkList(); });
+  loadUnitmapIndex().then(() => { if (document.getElementById('bookmark-modal').classList.contains('open')) renderBookmarkList(); });
+}
 function closeBookmark() { document.getElementById('bookmark-modal').classList.remove('open'); }
+function setBmMode(mode) {
+  if (bmMode === mode) return;
+  bmMode = mode;
+  document.getElementById('bm-mode-page').classList.toggle('active', mode === 'page');
+  document.getElementById('bm-mode-unit').classList.toggle('active', mode === 'unit');
+  renderBookmarkList();
+}
 function renderBookmarkList() {
+  if (bmMode === 'unit') { renderUnitList(); return; }
   const list = document.getElementById('bm-list');
   const prevScroll = list.scrollTop; list.innerHTML = '';
   function addSection(title) {
@@ -1657,6 +2010,7 @@ function renderBookmarkList() {
     sec.textContent = title; list.appendChild(sec);
   }
   const map = PAGE_MAPS[bookId] || [];
+  const toc = (_tocIndexCache && _tocIndexCache[bookId]) || null;
   if (map.length) {
     let frontAdded = false, contentAdded = false;
     map.forEach(entry => {
@@ -1669,9 +2023,17 @@ function renderBookmarkList() {
       // PDF/이미지 페이지 순번을 보여준다 — PAGE_MAPS가 비어있던 지금까지는 이 분기가
       // 한 번도 실행된 적이 없어 'G'+entry.edu가 과학 전용으로 하드코딩돼 있었음.
       const pgLabel = entry.type === 'front' ? '—' : (typeof entry.edu === 'number' ? ('G' + entry.edu) : String(entry.pdf));
-      row.innerHTML = `<div style="display:flex;flex-direction:column;gap:2px;flex:1;">
+      // 목차 데이터(제목·미리보기)가 있으면 기존 entry.sub(예: "E 133a") 대신 실제 교재
+      // 단원 제목을 보여주고, 그 밑에 본문 미리보기 한 줄을 추가한다 — 전부 교재 원문
+      // 그대로(build_toc.py 참고), 없으면(아직 로딩 전/이 과목 데이터 없음) 조용히
+      // 기존 방식(entry.sub)으로만 보여준다.
+      const tocEntry = toc && toc[entry.label];
+      const subLine = tocEntry && tocEntry.title ? escapeHtml(tocEntry.title) : escapeHtml(entry.sub);
+      const previewLine = tocEntry && tocEntry.preview
+        ? `<div style="font-size:11px;color:var(--ink-light);margin-top:1px;line-height:1.4;">${escapeHtml(tocEntry.preview)}</div>` : '';
+      row.innerHTML = `<div style="display:flex;flex-direction:column;gap:2px;flex:1;min-width:0;">
         <div style="font-size:13px;font-weight:${isCur ? '700' : '500'};color:${isCur ? 'var(--accent)' : 'var(--ink)'};">${entry.label}</div>
-        <div style="font-size:11px;color:var(--ink-mid);">${entry.sub}</div></div>
+        <div style="font-size:11px;color:var(--ink-mid);">${subLine}</div>${previewLine}</div>
         <div style="font-family:var(--mono);font-size:11px;color:${isCur ? 'var(--accent)' : 'var(--ink-light)'};min-width:28px;text-align:right;">${pgLabel}</div>`;
       row.onclick = () => goToPdfPage(entry.pdf);
       list.appendChild(row);
@@ -1686,6 +2048,137 @@ function renderBookmarkList() {
     }
   }
   list.scrollTop = prevScroll;
+}
+// 목차 "단원별 보기" — science-unitmap.json(사람이 교재 원문을 직접 읽어 쓴 학습목표/
+// 학습내용/핵심포인트, 10쪽 내외 단위)을 단원 단위 아코디언으로 보여준다. 이미지북
+// 전용 데이터라 PDF 교재(map.length===0인 경우)에는 해당 과목의 단원맵이 아직 없으면
+// 조용히 안내 문구만 보여준다(에러 아님, 추후 다른 과목으로 확장 가능한 설계).
+function renderUnitList() {
+  const list = document.getElementById('bm-list');
+  const prevScroll = list.scrollTop; list.innerHTML = '';
+  const units = (_unitmapIndexCache && _unitmapIndexCache[bookId]) || null;
+  if (!units || !units.length) {
+    const msg = document.createElement('div');
+    msg.style.cssText = 'padding:28px 18px;font-size:13px;color:var(--ink-light);text-align:center;line-height:1.6;';
+    msg.textContent = '이 교재는 아직 단원별 요약이 준비되지 않았습니다.';
+    list.appendChild(msg);
+    return;
+  }
+  units.forEach(u => {
+    const expanded = bmExpandedUnits.has(u.num);
+    const head = document.createElement('div');
+    head.className = 'bm-unit-head';
+    const estTag = u.estimated ? '<span style="color:var(--ink-light);font-weight:500;">[추정] </span>' : '';
+    head.innerHTML = `<div style="flex:1;min-width:0;">
+      <div style="font-size:13px;font-weight:700;color:var(--ink);">${expanded ? '▾' : '▸'} ${u.num}. ${estTag}${escapeHtml(u.title)}</div>
+      <div style="font-size:11px;color:var(--ink-light);margin-top:2px;">${u.start}~${u.end}쪽</div>
+      ${expanded ? '' : `<div style="font-size:12px;color:var(--ink-mid);margin-top:4px;line-height:1.4;">🎯 ${escapeHtml(u.objective)}</div>`}
+    </div>`;
+    head.onclick = () => {
+      if (bmExpandedUnits.has(u.num)) bmExpandedUnits.delete(u.num); else bmExpandedUnits.add(u.num);
+      renderUnitList();
+    };
+    list.appendChild(head);
+    if (expanded) {
+      const body = document.createElement('div');
+      body.className = 'bm-unit-body';
+      body.innerHTML = `
+        <div style="font-size:12px;color:var(--ink-mid);line-height:1.5;margin-bottom:8px;"><b>🎯 학습목표</b><br>${escapeHtml(u.objective)}</div>
+        <div style="font-size:12px;color:var(--ink-mid);line-height:1.5;margin-bottom:8px;"><b>📝 학습내용</b><br>${escapeHtml(u.content)}</div>
+        <div style="font-size:12px;color:var(--ink-mid);line-height:1.5;margin-bottom:10px;"><b>🔑 핵심포인트</b><br>${escapeHtml(u.keypoints)}</div>
+      `;
+      const goBtn = document.createElement('button');
+      goBtn.className = 'bm-unit-go';
+      goBtn.textContent = '📄 이 단원 페이지 보기';
+      goBtn.onclick = (e) => { e.stopPropagation(); goToPdfPage((u.start - 1) * 2 + 1); };
+      body.appendChild(goBtn);
+      list.appendChild(body);
+    }
+  });
+  list.scrollTop = prevScroll;
+}
+
+/* ══ 단원맵 패널 ══════════════════════════════════════════
+   목차의 "단원별 보기"와 같은 science-unitmap.json 데이터를 쓰지만, 목차는 책을 읽다가
+   한 단원만 펼쳐보는 용도이고 이 패널은 교사가 교재 전체 커리큘럼을 한 번에 훑어보거나
+   학부모 상담·수업 준비용으로 통째로 복사해가는 용도라 전부 펼친 채로 보여준다. */
+function openUnitmapPanel() {
+  closeAllSidePanels();
+  document.getElementById('unitmap-panel').classList.add('open');
+  renderUnitmapPanel();
+  loadUnitmapIndex().then(() => { if (document.getElementById('unitmap-panel').classList.contains('open')) renderUnitmapPanel(); });
+}
+function closeUnitmapPanel() { document.getElementById('unitmap-panel').classList.remove('open'); }
+function renderUnitmapPanel() {
+  const root = document.getElementById('um-results');
+  root.innerHTML = '';
+  const units = (_unitmapIndexCache && _unitmapIndexCache[bookId]) || null;
+  if (!units || !units.length) {
+    root.innerHTML = '<div style="padding:28px 18px;font-size:13px;color:var(--ink-light);text-align:center;line-height:1.6;">이 교재는 아직 단원맵이 준비되지 않았습니다.</div>';
+    return;
+  }
+  const toolbar = document.createElement('div');
+  toolbar.className = 'um-toolbar';
+  const copyBtn = document.createElement('button');
+  copyBtn.className = 'um-copy-btn';
+  copyBtn.textContent = '📋 전체 단원맵 복사(상담·수업 준비용)';
+  copyBtn.onclick = () => copyUnitmapToClipboard(units);
+  toolbar.appendChild(copyBtn);
+  root.appendChild(toolbar);
+  units.forEach(u => {
+    const box = document.createElement('div');
+    box.className = 'um-unit';
+    const estTag = u.estimated ? '<span style="color:var(--ink-light);font-weight:500;">[추정] </span>' : '';
+    box.innerHTML = `
+      <div class="um-unit-title">${u.num}. ${estTag}${escapeHtml(u.title)}</div>
+      <div style="font-size:11px;color:var(--ink-light);margin:2px 0 8px;">${u.start}~${u.end}쪽</div>
+      <div style="font-size:12px;color:var(--ink-mid);line-height:1.5;margin-bottom:8px;"><b>🎯 학습목표</b><br>${escapeHtml(u.objective)}</div>
+      <div style="font-size:12px;color:var(--ink-mid);line-height:1.5;margin-bottom:8px;"><b>📝 학습내용</b><br>${escapeHtml(u.content)}</div>
+      <div style="font-size:12px;color:var(--ink-mid);line-height:1.5;margin-bottom:10px;"><b>🔑 핵심포인트</b><br>${escapeHtml(u.keypoints)}</div>
+    `;
+    const goBtn = document.createElement('button');
+    goBtn.className = 'bm-unit-go';
+    goBtn.textContent = '📄 이 단원 페이지 보기';
+    goBtn.onclick = () => goToPdfPage((u.start - 1) * 2 + 1);
+    box.appendChild(goBtn);
+    root.appendChild(box);
+  });
+}
+function copyUnitmapToClipboard(units) {
+  const stageLabel = (currentMaterial && currentMaterial.stage) || bookId;
+  const lines = [`구몬 과학 ${stageLabel}단계 — 단원별 학습목표·학습내용·핵심포인트`, ''];
+  units.forEach(u => {
+    const estTag = u.estimated ? '[추정] ' : '';
+    lines.push(`${u.num}. ${estTag}${u.title} (${u.start}~${u.end}쪽)`);
+    lines.push(`- 학습목표: ${u.objective}`);
+    lines.push(`- 학습내용: ${u.content}`);
+    lines.push(`- 핵심포인트: ${u.keypoints}`);
+    lines.push('');
+  });
+  const text = lines.join('\n');
+  copyTextToClipboard(text).then(ok => showToast(ok ? '단원맵이 복사되었습니다' : '복사에 실패했습니다'));
+}
+// navigator.clipboard.writeText는 비보안 컨텍스트·권한 거부·포커스 없음 등으로 실패할 수
+// 있어, 구형 execCommand 방식(숨긴 textarea에 선택 후 복사)을 보조 수단으로 둔다.
+function copyTextToClipboard(text) {
+  if (navigator.clipboard && navigator.clipboard.writeText) {
+    return navigator.clipboard.writeText(text).then(() => true).catch(() => copyTextToClipboardFallback(text));
+  }
+  return Promise.resolve(copyTextToClipboardFallback(text));
+}
+function copyTextToClipboardFallback(text) {
+  try {
+    const ta = document.createElement('textarea');
+    ta.value = text;
+    ta.style.cssText = 'position:fixed;top:-9999px;left:-9999px;';
+    document.body.appendChild(ta);
+    ta.focus(); ta.select();
+    const ok = document.execCommand('copy');
+    document.body.removeChild(ta);
+    return ok;
+  } catch (e) {
+    return false;
+  }
 }
 
 /* ══ PDF 텍스트 검색 ══════════════════════════════════════ */

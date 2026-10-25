@@ -351,11 +351,26 @@
         return j.path || null;
       } catch (e) { console.warn('[ann-engine] 업로드 실패', e); return null; }
     }
+    // R2 버킷을 비공개 전환하기 전(2026-10-25) 마이그레이션 이전에 저장된 필기 레이어
+    // 데이터에는 옛 Worker가 돌려준 공개 r2.dev 절대 URL이 그대로 박혀 있다(지금 업로드
+    // 응답은 /files/notes/... 상대경로를 쓰지만, 그 전에 저장된 값은 안 바뀜). pages.dev
+    // 에서는 이 3개 공개 도메인을 같은 출처 프록시 경로로 다시 써서, 저장 시점과 무관하게
+    // 전부 정상 로딩되게 한다 — R2 버킷 퍼블릭 액세스를 꺼도 끊기지 않도록 하는 핵심 조치.
+    const OLD_R2_PUBLIC_DOMAINS = [
+      ['https://pub-f6db5a787c604d65916b9791cc7aa24a.r2.dev/', '/files/captures/'],
+      ['https://pub-2c7274e37bd74104881b4f0c725f33c0.r2.dev/', '/files/pdf/'],
+      ['https://pub-35dc47c3443b43c1bdb23c524c0d9a0e.r2.dev/', '/files/notes/'],
+    ];
     // 과거 버전(서버가 슬래시 없는 상대경로를 돌려주던 시절)에 저장된 값을 방어적으로
     // 보정한다 — 뷰어가 /subjects/science/처럼 중첩 경로에서 서빙되므로, 슬래시 없는
     // "data/images/..."를 그대로 쓰면 엉뚱한 위치에서 찾다 깨진다.
     function normalizeAssetSrc(src) {
       if (!src) return src;
+      if (location.hostname.endsWith('.pages.dev')) {
+        for (const [oldPrefix, newPrefix] of OLD_R2_PUBLIC_DOMAINS) {
+          if (src.startsWith(oldPrefix)) return newPrefix + src.slice(oldPrefix.length);
+        }
+      }
       if (src.startsWith('data:') || src.startsWith('http:') || src.startsWith('https:') || src.startsWith('/')) return src;
       return SITE_ROOT + src;
     }
