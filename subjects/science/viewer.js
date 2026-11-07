@@ -2054,6 +2054,19 @@ function renderBookmarkList() {
 // 학습내용/핵심포인트, 10쪽 내외 단위)을 단원 단위 아코디언으로 보여준다. 이미지북
 // 전용 데이터라 PDF 교재(map.length===0인 경우)에는 해당 과목의 단원맵이 아직 없으면
 // 조용히 안내 문구만 보여준다(에러 아님, 추후 다른 과목으로 확장 가능한 설계).
+// science-unitmap.json의 "쪽수"(start/end)는 단계마다 기준이 다르다(2026-11-07, 개념
+// 항로 작업 중 데이터로 확인) — A단계만 쪽수=실제 캡처면(pdfPage) 1:1이고, 나머지 10개
+// 단계(3A/2A/B/C/D/E/F/G/H/I)는 쪽수가 장(시트) 번호라 (쪽수-1)*2+1 변환이 필요하다.
+// 상세: kumon-science-image-book-page-numbering 메모리.
+const SCIENCE_UNIT_FACE_NUMBERED_STAGES = { 'A': true };
+// stageOverride를 안 주면 지금 열려 있는 교재(currentMaterial.stage) 기준 — 아직 교재를
+// 열기 전(예: 개념 항로에서 다른 단계 교재로 막 이동하려는 순간)이라 currentMaterial이
+// 그 단계가 아니면 호출부에서 stageOverride로 직접 넘겨야 한다.
+function scienceUnitStartToPdfPage(startPage, stageOverride) {
+  const stage = stageOverride || (currentMaterial && currentMaterial.stage) || '';
+  if (SCIENCE_UNIT_FACE_NUMBERED_STAGES[stage]) return startPage;
+  return (startPage - 1) * 2 + 1;
+}
 function renderUnitList() {
   const list = document.getElementById('bm-list');
   const prevScroll = list.scrollTop; list.innerHTML = '';
@@ -2091,7 +2104,7 @@ function renderUnitList() {
       const goBtn = document.createElement('button');
       goBtn.className = 'bm-unit-go';
       goBtn.textContent = '📄 이 단원 페이지 보기';
-      goBtn.onclick = (e) => { e.stopPropagation(); goToPdfPage((u.start - 1) * 2 + 1); };
+      goBtn.onclick = (e) => { e.stopPropagation(); goToPdfPage(scienceUnitStartToPdfPage(u.start)); };
       body.appendChild(goBtn);
       list.appendChild(body);
     }
@@ -2140,7 +2153,7 @@ function renderUnitmapPanel() {
     const goBtn = document.createElement('button');
     goBtn.className = 'bm-unit-go';
     goBtn.textContent = '📄 이 단원 페이지 보기';
-    goBtn.onclick = () => goToPdfPage((u.start - 1) * 2 + 1);
+    goBtn.onclick = () => goToPdfPage(scienceUnitStartToPdfPage(u.start));
     box.appendChild(goBtn);
     root.appendChild(box);
   });
@@ -2461,23 +2474,16 @@ function rmToggleTable() {
 }
 // "N쪽 교재 보기" — 지도 화면은 숨기고 해당 단계 교재를 열어 그 쪽으로 바로 이동한다.
 // 상세 패널(routemap-detail-panel)은 건드리지 않으므로 책을 보는 동안에도 계속 열려 있다.
-// science-unitmap.json의 "쪽수"(start/end) 표기가 단계마다 다른 기준으로 되어 있다
-// (실제 데이터로 확인함, 2026-11-07) — A단계만 캡처면(a/b) 번호와 1:1이고, 나머지
-// 10개 단계(3A/2A/B/C/D/E/F/G/H/I)는 장(시트) 번호라서 실제 캡처면 pdfPage로 가려면
-// (쪽수-1)×2+1 변환이 필요하다. 단원맵 패널의 "이 단원 페이지 보기"(goToPdfPage((u.start-1)*2+1))도
-// 같은 변환을 쓰고 있어 그 전례를 그대로 따른다 — 단, 그 버튼은 모든 단계에 이 공식을
-// 무조건 적용해서 A단계에서는 오히려 틀릴 수 있다(알려진 한계, 여기서는 안 건드림).
-const ROUTEMAP_FACE_NUMBERED_STAGES = { 'A': true }; // 이 단계만 쪽수=캡처면 번호 1:1
-function routemapPageToPdf(stage, pageNum) {
-  if (ROUTEMAP_FACE_NUMBERED_STAGES[stage]) return pageNum;
-  return (pageNum - 1) * 2 + 1;
-}
 function routemapJumpToPage(stage, rangeStr) {
   const bid = ROUTEMAP_STAGE_TO_BOOKID[stage];
   const m = bid && materialByBookId(bid);
   if (!m) { showToast('이 단계 교재를 찾을 수 없습니다'); return; }
   const startSheetOrFace = parseInt(String(rangeStr), 10);
-  const pdfPage = startSheetOrFace ? routemapPageToPdf(stage, startSheetOrFace) : null;
+  // 아직 다른 단계 교재가 열려 있거나 교재가 전혀 안 열린 상태에서 호출되므로(지도 화면
+  // → 방금 고른 정거장의 단계로 막 이동하려는 순간), currentMaterial을 믿지 않고 이
+  // 정거장의 단계를 직접 넘긴다 — scienceUnitStartToPdfPage()(단원맵/목차 패널과 공유하는
+  // 쪽수 변환 공식, kumon-science-image-book-page-numbering 메모리 참고)를 재사용.
+  const pdfPage = startSheetOrFace ? scienceUnitStartToPdfPage(startSheetOrFace, stage) : null;
   document.getElementById('routemap-screen').classList.remove('show');
   _routemapReturnScreen = 'viewer';
   openMaterial(m.file || bookIdOf(m)).then(() => {
