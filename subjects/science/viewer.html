@@ -8,7 +8,7 @@
 <meta name="theme-color" content="#e8401c">
 <link rel="icon" href="../../icon.svg" type="image/svg+xml">
 <link rel="apple-touch-icon" href="../../icon-180.png">
-<link href="https://fonts.googleapis.com/css2?family=Noto+Sans+KR:wght@300;400;500;700;900&family=Noto+Serif+KR:wght@400;700&family=Gaegu:wght@400;700&family=DM+Mono:wght@400;500&display=swap" rel="stylesheet">
+<link href="https://fonts.googleapis.com/css2?family=Noto+Sans+KR:wght@300;400;500;700;900&family=Noto+Serif+KR:wght@400;700&family=Gaegu:wght@400;700&family=DM+Mono:wght@400;500&family=Gowun+Batang:wght@400;700&display=swap" rel="stylesheet">
 <style>
 :root{
   --bg:#f5f3ef; --surface:#ffffff; --border:#e8e4dc; --ink:#1a1814; --ink-mid:#6a6258; --ink-light:#aaa49c;
@@ -226,9 +226,9 @@ body{font-family:var(--font);background:var(--bg);color:var(--ink);height:100vh;
 .sb-sync.saving{color:var(--accent);background:var(--accent-light);}
 .sb-sync.offline{color:var(--ink-light);background:var(--bg);}
 
-#bookmark-modal,#layer-panel,#search-panel,#glossary-panel,#unitmap-panel{position:fixed;top:0;right:0;bottom:0;z-index:500;display:none;pointer-events:none;}
-#layer-panel,#search-panel,#glossary-panel,#unitmap-panel{z-index:700;}
-#bookmark-modal.open,#layer-panel.open,#search-panel.open,#glossary-panel.open,#unitmap-panel.open{display:flex;}
+#bookmark-modal,#layer-panel,#search-panel,#glossary-panel,#unitmap-panel,#routemap-detail-panel{position:fixed;top:0;right:0;bottom:0;z-index:500;display:none;pointer-events:none;}
+#layer-panel,#search-panel,#glossary-panel,#unitmap-panel,#routemap-detail-panel{z-index:700;}
+#bookmark-modal.open,#layer-panel.open,#search-panel.open,#glossary-panel.open,#unitmap-panel.open,#routemap-detail-panel.open{display:flex;}
 .bm-box,.lp-box{pointer-events:auto;background:var(--surface);border-radius:16px 0 0 16px;width:min(340px,88vw);height:100%;display:flex;flex-direction:column;box-shadow:var(--shadow-lg);}
 .lp-box{width:min(360px,92vw);}
 .bm-hdr,.lp-hdr{padding:16px 18px 12px;border-bottom:1px solid var(--border);display:flex;align-items:center;justify-content:space-between;flex-shrink:0;}
@@ -388,6 +388,107 @@ body{font-family:var(--font);background:var(--bg);color:var(--ink);height:100vh;
 .toast.show{opacity:1;transform:translateX(-50%) translateY(0);}
 .toast-action{bottom:64px;display:flex;align-items:center;gap:10px;padding:9px 12px 9px 20px;}
 .toast-action-btn{border:none;background:var(--accent);color:#fff;font-family:var(--font);font-size:12px;font-weight:700;padding:6px 12px;border-radius:14px;cursor:pointer;flex-shrink:0;}
+
+/* ══ 과학 개념 항로(커리큘럼 연결 지도) ══════════════════════════════════
+   독립 시제품(science-routes.html, claude.ai/artifact/3S1yGJjeuD1E29f8KWZCj8)에서
+   검증한 디자인을 그대로 가져오되, 토큰 이름은 --rm- 접두사로 격리한다 — 이 앱의
+   전역 :root가 이미 --surface/--border 같은 이름을 다른 값으로 쓰고 있어서, 그대로
+   :root에 다시 선언하면 다른 화면(헤더·패널·툴바)의 색이 전부 깨진다.
+   단, --route-1~8(노선 색상)은 접두사를 안 붙인다 — science-routes.json의
+   colorVar 값("--route-1" 등)이 이미 그 이름으로 저장돼 있어서, 여기서 이름을
+   바꾸면 JS가 참조하는 변수명과 어긋나 색이 전부 사라진다(실제로 한 번 이 실수를
+   했다가 배포 후 화면에서 발견해 고침 — 2026-11-07). */
+.routemap-root{
+  --rm-surface:#fcfcfb; --rm-plane:#f9f9f7; --rm-raised:#ffffff;
+  --rm-ink:#0b0b0b; --rm-ink-dim:#52514e; --rm-ink-muted:#898781;
+  --rm-border:rgba(11,11,11,.10); --rm-grid:#e1e0d9;
+  --route-1:#2a78d6; --route-2:#eb6834; --route-3:#1baf7a; --route-4:#eda100;
+  --route-5:#e87ba4; --route-6:#008300; --route-7:#6250d6; --route-8:#e34948;
+  --rm-font-display:"Gowun Batang","Noto Serif KR",serif;
+}
+body.dark .routemap-root{
+  --rm-surface:#1a1a19; --rm-plane:#0d0d0d; --rm-raised:#222221;
+  --rm-ink:#f0efec; --rm-ink-dim:#c3c2b7; --rm-ink-muted:#898781;
+  --rm-border:rgba(255,255,255,.10); --rm-grid:#2c2c2a;
+  --route-1:#3987e5; --route-2:#d95926; --route-3:#199e70; --route-4:#c98500;
+  --route-5:#d55181; --route-6:#008300; --route-7:#9085e9; --route-8:#e66767;
+}
+#routemap-screen{display:none;flex:1;flex-direction:column;overflow:hidden;}
+#routemap-screen.show{display:flex;}
+.rm-toolbar{height:46px;background:var(--rm-surface);border-bottom:1px solid var(--rm-border);display:flex;align-items:center;padding:0 12px;gap:10px;flex-shrink:0;overflow-x:auto;}
+.rm-back{padding:5px 12px;border-radius:7px;border:1px solid var(--rm-border);background:none;font-size:12px;color:var(--rm-ink-dim);cursor:pointer;font-family:var(--font);white-space:nowrap;flex-shrink:0;}
+.rm-back:hover{background:var(--rm-plane);}
+.rm-toolbar-title{font-size:13px;font-weight:700;color:var(--rm-ink);white-space:nowrap;flex-shrink:0;}
+.rm-scroll-area{flex:1;overflow-y:auto;background:var(--rm-plane);}
+.rm-inner{max-width:1180px;margin:0 auto;padding:16px;display:flex;flex-direction:column;gap:14px;}
+.rm-sub{font-size:13px;color:var(--rm-ink-dim);line-height:1.6;}
+.rm-meta-row{display:flex;flex-wrap:wrap;gap:8px 16px;font-size:12px;color:var(--rm-ink-muted);}
+.rm-meta-row b{color:var(--rm-ink-dim);font-weight:600;}
+.domain-tabs{display:flex;flex-wrap:wrap;gap:6px;}
+.domain-tab{display:flex;align-items:center;gap:7px;padding:9px 16px;border-radius:10px;border:1px solid var(--rm-border);background:var(--rm-surface);cursor:pointer;font-size:13px;font-weight:600;color:var(--rm-ink-dim);font-family:var(--font);transition:background .15s ease,color .15s ease,border-color .15s ease;}
+.domain-tab:hover{background:var(--rm-plane);}
+.domain-tab[aria-selected="true"]{background:var(--rm-ink);color:var(--rm-surface);border-color:var(--rm-ink);}
+.domain-tab .tab-icon{font-size:15px;}
+.rm-panel{background:var(--rm-surface);border:1px solid var(--rm-border);border-radius:14px;padding:18px 18px 16px;}
+.legend{display:flex;flex-wrap:wrap;gap:6px;}
+.route-pill{display:flex;align-items:center;gap:6px;padding:6px 11px 6px 9px;border-radius:999px;border:1px solid var(--rm-border);background:var(--rm-raised);cursor:pointer;font-size:12px;color:var(--rm-ink-dim);font-weight:600;font-family:var(--font);transition:opacity .15s ease,transform .1s ease;}
+.route-pill:hover{transform:translateY(-1px);}
+.route-pill .dot{width:9px;height:9px;border-radius:50%;flex-shrink:0;}
+.route-pill[aria-pressed="true"]{background:var(--rm-plane);color:var(--rm-ink);border-color:currentColor;}
+.legend-reset{font-size:12px;color:var(--rm-ink-muted);background:none;border:1px dashed var(--rm-border);border-radius:999px;padding:6px 11px;cursor:pointer;font-family:var(--font);}
+.legend-reset:hover{color:var(--rm-ink-dim);}
+.rm-map-toolbar{display:flex;align-items:center;justify-content:space-between;gap:12px;flex-wrap:wrap;margin-bottom:10px;}
+.rm-hint{font-size:12px;color:var(--rm-ink-muted);}
+.rm-view-toggle{font-size:12px;color:var(--rm-ink-dim);background:none;border:1px solid var(--rm-border);border-radius:8px;padding:7px 12px;cursor:pointer;font-family:var(--font);}
+.rm-view-toggle:hover{background:var(--rm-plane);}
+.map-scroll{overflow-x:auto;border-radius:10px;-webkit-overflow-scrolling:touch;}
+.map-scroll svg{display:block;min-width:1040px;}
+.rm-scroll-hint{font-size:11px;color:var(--rm-ink-muted);margin-top:6px;}
+.stop{cursor:pointer;}
+.stop circle.hit{fill:transparent;}
+.stop circle.dot{stroke:var(--rm-surface);stroke-width:2px;}
+.stop:hover circle.dot,.stop:focus-visible circle.dot{r:9;}
+.stop:focus-visible{outline:none;}
+.stop:focus-visible circle.hit{stroke:var(--rm-ink);stroke-width:2px;fill:none;}
+.route-line{fill:none;stroke-width:2px;stroke-linecap:round;stroke-linejoin:round;}
+.route-line.skip{stroke-dasharray:1 6;}
+.lane-label{font-size:12.5px;font-weight:700;}
+.lane-sub{font-size:10.5px;fill:var(--rm-ink-muted);}
+.stage-label{font-size:12px;font-weight:700;fill:var(--rm-ink-dim);}
+.dim{opacity:.18;transition:opacity .2s ease;}
+.bright{opacity:1;transition:opacity .2s ease;}
+.rm-data-table{width:100%;border-collapse:collapse;font-size:12.5px;}
+.rm-data-table th,.rm-data-table td{text-align:left;padding:8px 10px;border-bottom:1px solid var(--rm-border);vertical-align:top;}
+.rm-data-table th{color:var(--rm-ink-muted);font-weight:600;font-size:11px;text-transform:uppercase;letter-spacing:.04em;}
+.rm-data-table td.stage-cell{white-space:nowrap;font-weight:700;}
+.rm-table-wrap{overflow-x:auto;}
+.rm-footer{font-size:11.5px;color:var(--rm-ink-muted);line-height:1.6;}
+/* 노선 상세 패널(routemap-detail-panel)은 기존 레이어/검색/용어정리/단원맵 패널과
+   같은 .lp-box 틀을 그대로 쓴다(이 과목 공통 chrome, 다른 토큰 불필요) — 안쪽
+   아코디언만 시제품에서 쓰던 전용 클래스를 그대로 가져온다. */
+.detail-route{display:inline-flex;align-items:center;gap:6px;font-size:11px;font-weight:700;letter-spacing:.04em;text-transform:uppercase;color:var(--ink-mid);margin-bottom:6px;}
+.detail-route .dot{width:9px;height:9px;border-radius:50%;flex-shrink:0;}
+.route-desc{font-size:12.5px;line-height:1.55;color:var(--ink-mid);margin:0;padding:0 18px 12px;}
+.detail-list{padding:2px 0 0;}
+.accordion-item{border-bottom:1px solid var(--border);padding:14px 18px;transition:background .25s ease,box-shadow .25s ease;}
+.accordion-item:last-child{border-bottom:none;}
+.accordion-item.selected{background:var(--bg);box-shadow:inset 3px 0 0 0 var(--item-accent);}
+.accordion-item.selected .accordion-stage{color:var(--item-accent);}
+.accordion-head{display:flex;align-items:flex-start;justify-content:space-between;gap:10px;cursor:pointer;}
+.accordion-stage{font-family:var(--rm-font-display,serif);font-size:16px;font-weight:700;margin:0 0 2px;color:var(--ink);}
+.accordion-meta{font-size:11.5px;color:var(--ink-light);margin-bottom:7px;}
+.page-link{display:inline-flex;align-items:center;gap:5px;font-size:11.5px;font-weight:700;color:var(--item-accent);background:color-mix(in srgb, var(--item-accent) 14%, var(--surface));border:1px solid color-mix(in srgb, var(--item-accent) 40%, transparent);border-radius:999px;padding:4px 11px 4px 9px;cursor:pointer;transition:background .15s ease;font-family:var(--font);}
+.page-link:hover{background:color-mix(in srgb, var(--item-accent) 26%, var(--surface));}
+.accordion-chevron{flex-shrink:0;font-size:12px;color:var(--ink-light);margin-top:3px;transition:transform .15s ease;}
+.accordion-item.closed .accordion-chevron{transform:rotate(-90deg);}
+.accordion-body{overflow:hidden;max-height:1200px;opacity:1;margin-top:10px;transition:max-height .25s ease,opacity .2s ease,margin-top .2s ease;}
+.accordion-item.closed .accordion-body{max-height:0;opacity:0;margin-top:0;}
+.detail-section{margin-bottom:12px;}
+.detail-section:last-child{margin-bottom:0;}
+.detail-section h3{font-size:11px;font-weight:700;color:var(--ink-light);text-transform:uppercase;letter-spacing:.06em;margin:0 0 5px;}
+.detail-section p{font-size:13px;line-height:1.65;color:var(--ink-mid);margin:0;}
+.estimated-note{font-size:11.5px;color:var(--ink-light);background:var(--bg);border:1px solid var(--border);border-radius:8px;padding:8px 10px;line-height:1.5;margin-top:10px;}
+.rmp-goto-map{display:block;width:calc(100% - 36px);margin:14px 18px 0;font-size:12px;font-weight:600;color:var(--accent);background:var(--accent-light);border:1px solid var(--accent);border-radius:8px;padding:8px 10px;cursor:pointer;font-family:var(--font);text-align:center;}
 </style>
 </head>
 <body>
@@ -403,6 +504,7 @@ body{font-family:var(--font);background:var(--bg);color:var(--ink);height:100vh;
       <select id="subject-switcher-select" onchange="onSubjectSwitch(this.value)"><option>과목 전환…</option></select>
     </div>
     <button class="header-btn header-icon-btn" id="precache-btn" onclick="manualPrecacheAll()" title="전체 교재 오프라인 저장">📥<span class="precache-badge" id="precache-badge"></span></button>
+    <button class="header-btn" onclick="toggleRoutemapScreen()" title="단계·단원 간 개념 연결 지도">🧭 개념항로</button>
     <button class="header-btn" onclick="goHome()">🏠 허브</button>
     <button class="header-btn" onclick="toggleDark()">🌙 다크</button>
   </div>
@@ -541,6 +643,47 @@ body{font-family:var(--font);background:var(--bg);color:var(--ink);height:100vh;
       <span class="sb-info" id="sb-page">페이지: 1</span>
     </div>
   </div>
+
+  <!-- 과학 개념 항로(커리큘럼 연결 지도) — 자료실/뷰어와 같은 레벨의 세 번째 화면.
+       toggleRoutemapScreen()이 자료실↔뷰어 전환과 똑같은 방식(display/classList)으로
+       숨기고 보여주므로, 뒤에서 보고 있던 책 상태(페이지·필기)는 전혀 건드리지 않는다. -->
+  <div id="routemap-screen" class="routemap-root">
+    <div class="rm-toolbar">
+      <button class="rm-back" onclick="toggleRoutemapScreen()">← 뒤로</button>
+      <div class="rm-toolbar-title">🧭 과학 개념 항로</div>
+      <div class="domain-tabs" id="rm-domain-tabs"></div>
+    </div>
+    <div class="rm-scroll-area">
+      <div class="rm-inner">
+        <p class="rm-sub">구몬 과학 11단계(3A~I) 전체 교재를 5개 영역(생물·화학·물리·지구과학·천문)으로 나눠 읽고, 같은 개념이 어느 단계를 거쳐 다시 나오고 심화되는지 노선으로 정리했습니다. 노선을 누르면 그 길만 밝아지면서 모든 정거장의 학습목표·학습내용·핵심포인트가 옆 패널에서 한 번에 펼쳐지고, 지도의 정거장을 누르면 그 항목으로 바로 이동합니다.</p>
+        <div class="rm-meta-row">
+          <span><b>분석 범위</b> <span id="rm-meta-scope"></span></span>
+          <span><b>발견된 노선</b> <span id="rm-meta-routes"></span></span>
+          <span><b>정거장</b> <span id="rm-meta-stops"></span></span>
+        </div>
+        <div class="rm-panel">
+          <div class="legend" id="rm-legend"></div>
+        </div>
+        <div class="rm-panel">
+          <div class="rm-map-toolbar">
+            <div class="rm-hint">노선을 고르면 모든 정거장 설명이 열립니다 · 정거장을 누르면 그 항목으로 이동합니다</div>
+            <button class="rm-view-toggle" id="rm-table-toggle" type="button" onclick="rmToggleTable()">표로 보기</button>
+          </div>
+          <div class="map-scroll">
+            <svg id="rm-map" viewBox="0 0 1300 530" role="img" aria-label="구몬 과학 커리큘럼 연결 지도"></svg>
+          </div>
+          <div class="rm-scroll-hint">← 옆으로 스크롤하면 전체 11단계를 볼 수 있어요 →</div>
+          <div class="rm-table-wrap" id="rm-table-wrap" hidden>
+            <table class="rm-data-table" id="rm-data-table">
+              <thead><tr><th>노선</th><th>단계</th><th>단원</th><th>쪽수</th><th>핵심포인트</th></tr></thead>
+              <tbody id="rm-table-body"></tbody>
+            </table>
+          </div>
+        </div>
+        <p class="rm-footer">생물·화학·물리·지구과학·천문 5개 영역 모두 실제 전사된 교재 텍스트를 직접 읽어 노선을 정리했으며, 지어낸 내용은 없습니다. "단계 건너뜀" 표시(점선)는 그 개념이 중간 단계에서는 다루지 않다가 몇 단계를 건너뛰어 다시 등장함을 뜻합니다. 두 노선에 함께 걸리는 단원은 학습내용에 "※ 같은 단원이 OO 노선과도 겹칩니다"로 표시했습니다.</p>
+      </div>
+    </div>
+  </div>
 </div>
 
 <div id="bookmark-modal"><div class="bm-box"><div class="bm-hdr"><div class="bm-title">🔖 목차</div><div class="bm-mode-toggle"><button class="bm-mode-btn active" id="bm-mode-page" onclick="setBmMode('page')">페이지별</button><button class="bm-mode-btn" id="bm-mode-unit" onclick="setBmMode('unit')">단원별</button></div><button class="bm-close" onclick="closeBookmark()">✕</button></div><div class="bm-list" id="bm-list"></div></div></div>
@@ -610,6 +753,20 @@ body{font-family:var(--font);background:var(--bg);color:var(--ink);height:100vh;
     <div class="lp-hdr"><div class="lp-title">📚 단원맵</div><button class="lp-close" onclick="closeUnitmapPanel()">✕</button></div>
     <div class="lp-body" style="padding:0;">
       <div id="um-results"></div>
+    </div>
+  </div>
+</div>
+
+<!-- 개념 항로 노선 상세 패널 — 레이어/검색/용어정리/단원맵과 같은 .lp-box 틀(레이어 패널
+     chrome 재사용)이지만, closeAllSidePanels()에는 참여해도(다른 패널을 열면 이것도 닫힘)
+     화면 전환(자료실↔뷰어↔개념항로) 자체로는 절대 안 닫힌다 — toggleRoutemapScreen()과
+     routemapJumpToPage() 둘 다 이 패널을 건드리지 않기 때문(작업지시문에서 요구한 동작). -->
+<div id="routemap-detail-panel" class="routemap-root">
+  <div class="lp-box">
+    <div class="lp-hdr"><div class="lp-title" id="rm-detail-title">🧭 노선 상세</div><button class="lp-close" onclick="closeRoutemapDetailPanel()">✕</button></div>
+    <div class="lp-body" style="padding:0;">
+      <button class="rmp-goto-map" onclick="toggleRoutemapScreen()">← 지도 보기</button>
+      <div id="rm-detail-body"></div>
     </div>
   </div>
 </div>

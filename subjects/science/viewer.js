@@ -596,6 +596,7 @@ function closeAllSidePanels() {
   closeLayerPanel();
   closeBookmark();
   closeUnitmapPanel();
+  closeRoutemapDetailPanel();
 }
 function openSearchPanel() {
   closeAllSidePanels();
@@ -2179,6 +2180,310 @@ function copyTextToClipboardFallback(text) {
   } catch (e) {
     return false;
   }
+}
+
+/* ══ 과학 개념 항로(커리큘럼 연결 지도) ══════════════════════════════════
+   5개 영역(생물/화학/물리/지구과학/천문) 노선 데이터(_search-index/science-routes.json)를
+   한 번만 fetch해서 지도를 그린다. 화면 전환은 자료실↔뷰어 전환(showViewer/backToMaterial)과
+   같은 방식(display/classList)을 그대로 써서, 뒤에서 보던 책 상태는 전혀 건드리지 않는다.
+   독립 시제품(science-routes.html)에서 검증한 렌더링 로직을 그대로 포팅했다. */
+const ROUTEMAP_STAGE_TO_BOOKID = {
+  '3A': 'kumon-science-001-3A', '2A': 'kumon-science-002-2A', 'A': 'kumon-science-003-A',
+  'B': 'kumon-science-004-B', 'C': 'kumon-science-005-C', 'D': 'kumon-science-006-D',
+  'E': 'kumon-science-007-E', 'F': 'kumon-science-008-F', 'G': 'kumon-science-009-G',
+  'H': 'kumon-science-010-H', 'I': 'kumon-science-011-I'
+};
+const ROUTEMAP_DOMAINS = [
+  { key: 'biology', icon: '🧬', label: '생물', scope: '생물 영역 97개 단원' },
+  { key: 'chemistry', icon: '🧪', label: '화학', scope: '화학 영역 40개 단원' },
+  { key: 'physics', icon: '⚛️', label: '물리', scope: '물리 영역 61개 단원' },
+  { key: 'earth', icon: '🌍', label: '지구과학', scope: '지구과학 영역 37개 단원' },
+  { key: 'astro', icon: '🔭', label: '천문', scope: '천문 영역 17개 단원' }
+];
+const ROUTEMAP_STAGES = ['3A', '2A', 'A', 'B', 'C', 'D', 'E', 'F', 'G', 'H', 'I'];
+let _routemapData = null;         // fetch 완료 후 {biology:[...], chemistry:[...], ...}
+let _routemapInitStarted = false;
+let _routemapCurrentDomain = 'biology';
+let _routemapRoutes = [];         // 현재 영역의 노선 배열(레인 좌표 계산 포함)
+let _routemapActiveRoute = null;
+let _routemapReturnScreen = 'material'; // toggleRoutemapScreen()이 닫힐 때 돌아갈 화면
+let _routemapExpanded = {};       // key "domain#routeId#stopIdx" -> true(펼침)/false(접힘)
+let _routemapSelectedKey = null;
+
+// 자료실↔뷰어 전환(showViewer/backToMaterial)과 완전히 같은 수법으로 세 번째 화면을 켠다/끈다.
+// 헤더의 "🧭 개념항로" 버튼과 상세 패널 안 "← 지도 보기" 버튼이 똘 다 이 함수 하나를 쓴다 —
+// 이미 지도가 열려 있으면 닫고(돌아갈 화면은 열 때 기억해둔 _routemapReturnScreen), 닫혀
+// 있으면 지금 보이는 화면(자료실/뷰어)을 기억하고 연다. 뷰어의 책 상태는 전혀 건드리지 않는다.
+function toggleRoutemapScreen() {
+  const screen = document.getElementById('routemap-screen');
+  if (screen.classList.contains('show')) {
+    screen.classList.remove('show');
+    if (_routemapReturnScreen === 'viewer') document.getElementById('viewer-screen').classList.add('show');
+    else document.getElementById('material-screen').style.display = '';
+  } else {
+    _routemapReturnScreen = document.getElementById('viewer-screen').classList.contains('show') ? 'viewer' : 'material';
+    document.getElementById('material-screen').style.display = 'none';
+    document.getElementById('viewer-screen').classList.remove('show');
+    screen.classList.add('show');
+    initRoutemapOnce();
+  }
+}
+function initRoutemapOnce() {
+  if (_routemapInitStarted) return;
+  _routemapInitStarted = true;
+  const tabsEl = document.getElementById('rm-domain-tabs');
+  ROUTEMAP_DOMAINS.forEach(meta => {
+    const btn = document.createElement('button');
+    btn.type = 'button';
+    btn.className = 'domain-tab';
+    btn.setAttribute('role', 'tab');
+    btn.setAttribute('data-domain', meta.key);
+    btn.setAttribute('aria-selected', meta.key === _routemapCurrentDomain ? 'true' : 'false');
+    btn.innerHTML = '<span class="tab-icon">' + meta.icon + '</span><span>' + meta.label + '</span>';
+    btn.onclick = () => renderRoutemapDomain(meta.key);
+    tabsEl.appendChild(btn);
+  });
+  fetch('../../_search-index/science-routes.json', { cache: 'no-store' })
+    .then(res => { if (!res.ok) throw new Error('no routes'); return res.json(); })
+    .then(data => { _routemapData = data && typeof data === 'object' ? data : {}; renderRoutemapDomain(_routemapCurrentDomain); })
+    .catch(() => {
+      document.getElementById('rm-legend').innerHTML = '<div style="padding:12px;font-size:12px;color:var(--rm-ink-muted);">개념 항로 데이터를 불러오지 못했습니다.</div>';
+    });
+}
+function routemapStageIdx(code) { return ROUTEMAP_STAGES.indexOf(code); }
+function renderRoutemapDomain(domainKey) {
+  if (!_routemapData) return; // 아직 fetch 중 — 로드 완료 후 initRoutemapOnce()의 .then()이 다시 부른다
+  _routemapCurrentDomain = domainKey;
+  _routemapActiveRoute = null;
+  closeRoutemapDetailPanel();
+
+  document.querySelectorAll('#rm-domain-tabs .domain-tab').forEach(btn => {
+    btn.setAttribute('aria-selected', btn.getAttribute('data-domain') === domainKey ? 'true' : 'false');
+  });
+
+  const raw = _routemapData[domainKey] || [];
+  const leftMargin = 236, colGap = 100, topMargin = 54, rowGap = 58;
+  _routemapRoutes = raw.map((route, ri) => ({
+    id: route.id, name: route.name, colorVar: route.colorVar, desc: route.desc, lane: ri,
+    stops: route.stops.map(s => Object.assign({}, s, { sx: routemapStageIdx(s.stage) }))
+  }));
+  const laneCount = _routemapRoutes.length;
+  const totalStops = _routemapRoutes.reduce((sum, r) => sum + r.stops.length, 0);
+
+  const meta = ROUTEMAP_DOMAINS.find(m => m.key === domainKey);
+  document.getElementById('rm-meta-scope').textContent = meta ? meta.scope : '';
+  document.getElementById('rm-meta-routes').textContent = laneCount + '개';
+  document.getElementById('rm-meta-stops').textContent = totalStops + '개 지점';
+
+  const svg = document.getElementById('rm-map');
+  while (svg.firstChild) svg.removeChild(svg.firstChild);
+  const svgHeight = topMargin + laneCount * rowGap + 12;
+  svg.setAttribute('viewBox', '0 0 1300 ' + svgHeight);
+  svg.setAttribute('aria-label', '구몬 과학 3A부터 I단계까지, ' + (meta ? meta.label : '') + ' 영역 ' + laneCount + '개 개념이 각 단계를 거쳐 심화되는 경로를 보여주는 노선도');
+
+  const svgNS = 'http://www.w3.org/2000/svg';
+  const el = (tag, attrs) => {
+    const n = document.createElementNS(svgNS, tag);
+    for (const k in attrs) n.setAttribute(k, attrs[k]);
+    return n;
+  };
+  const x = i => leftMargin + i * colGap;
+  const y = i => topMargin + i * rowGap;
+  const gridBottom = topMargin + (laneCount - 1) * rowGap + 18;
+  ROUTEMAP_STAGES.forEach((code, i) => {
+    svg.appendChild(el('line', { x1: x(i), y1: topMargin - 28, x2: x(i), y2: gridBottom, stroke: 'var(--rm-grid)', 'stroke-width': '1' }));
+    const t = el('text', { x: x(i), y: topMargin - 38, 'text-anchor': 'middle', class: 'stage-label' });
+    t.textContent = code;
+    svg.appendChild(t);
+  });
+  _routemapRoutes.forEach(route => {
+    const ly = y(route.lane);
+    const g = el('g', { 'data-route': route.id, class: 'bright' });
+    const nameT = el('text', { x: 14, y: ly - 4, class: 'lane-label' });
+    nameT.setAttribute('fill', 'var(' + route.colorVar + ')');
+    nameT.textContent = route.name;
+    g.appendChild(nameT);
+    const subT = el('text', { x: 14, y: ly + 11, class: 'lane-sub' });
+    subT.textContent = route.stops.length + '개 정거장';
+    g.appendChild(subT);
+    for (let i = 0; i < route.stops.length - 1; i++) {
+      const a = route.stops[i], b = route.stops[i + 1];
+      const skip = (b.sx - a.sx) > 1;
+      g.appendChild(el('line', { x1: x(a.sx), y1: ly, x2: x(b.sx), y2: ly, class: 'route-line' + (skip ? ' skip' : ''), stroke: 'var(' + route.colorVar + ')' }));
+    }
+    route.stops.forEach((stop, stopIdx) => {
+      const sg = el('g', { class: 'stop', tabindex: '0', role: 'button', 'aria-label': stop.stage + '단계 ' + stop.unit });
+      sg.appendChild(el('circle', { class: 'hit', cx: x(stop.sx), cy: ly, r: 16 }));
+      sg.appendChild(el('circle', { class: 'dot', cx: x(stop.sx), cy: ly, r: 7, fill: 'var(' + route.colorVar + ')' }));
+      const openThis = () => selectRoutemapRoute(route.id, stopIdx);
+      sg.addEventListener('click', openThis);
+      sg.addEventListener('keydown', e => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); openThis(); } });
+      g.appendChild(sg);
+    });
+    svg.appendChild(g);
+  });
+
+  const legend = document.getElementById('rm-legend');
+  legend.innerHTML = '';
+  _routemapRoutes.forEach(route => {
+    const pill = document.createElement('button');
+    pill.type = 'button';
+    pill.className = 'route-pill';
+    pill.setAttribute('data-route', route.id);
+    pill.setAttribute('aria-pressed', 'false');
+    pill.style.color = 'var(' + route.colorVar + ')';
+    pill.innerHTML = '<span class="dot" style="background:var(' + route.colorVar + ')"></span>';
+    const label = document.createElement('span');
+    label.style.color = 'var(--rm-ink-dim)';
+    label.textContent = route.name;
+    pill.appendChild(label);
+    pill.onclick = () => {
+      if (_routemapActiveRoute === route.id) { _routemapActiveRoute = null; applyRoutemapHighlight(); closeRoutemapDetailPanel(); }
+      else selectRoutemapRoute(route.id);
+    };
+    legend.appendChild(pill);
+  });
+  const resetBtn = document.createElement('button');
+  resetBtn.type = 'button'; resetBtn.className = 'legend-reset'; resetBtn.textContent = '전체 보기';
+  resetBtn.onclick = () => { _routemapActiveRoute = null; applyRoutemapHighlight(); closeRoutemapDetailPanel(); };
+  legend.appendChild(resetBtn);
+
+  const tbody = document.getElementById('rm-table-body');
+  tbody.innerHTML = '';
+  _routemapRoutes.forEach(route => {
+    route.stops.forEach(stop => {
+      const tr = document.createElement('tr');
+      const routeCell = document.createElement('td');
+      routeCell.innerHTML = '<span class="dot" style="display:inline-block;width:8px;height:8px;border-radius:50%;background:var(' + route.colorVar + ');margin-right:6px;"></span>' + escapeHtml(route.name);
+      const stageCell = document.createElement('td'); stageCell.className = 'stage-cell'; stageCell.textContent = stop.stage;
+      const unitCell = document.createElement('td'); unitCell.textContent = stop.unit;
+      const rangeCell = document.createElement('td'); rangeCell.textContent = stop.range;
+      const kpCell = document.createElement('td'); kpCell.textContent = stop.keypoints;
+      tr.append(routeCell, stageCell, unitCell, rangeCell, kpCell);
+      tbody.appendChild(tr);
+    });
+  });
+}
+function applyRoutemapHighlight() {
+  const svg = document.getElementById('rm-map');
+  svg.querySelectorAll('g[data-route]').forEach(g => {
+    const isActive = !_routemapActiveRoute || g.getAttribute('data-route') === _routemapActiveRoute;
+    g.classList.toggle('dim', !isActive);
+    g.classList.toggle('bright', isActive);
+  });
+  document.querySelectorAll('#rm-legend .route-pill').forEach(p => {
+    p.setAttribute('aria-pressed', p.getAttribute('data-route') === _routemapActiveRoute ? 'true' : 'false');
+  });
+}
+function selectRoutemapRoute(routeId, focusIdx) {
+  _routemapActiveRoute = routeId;
+  applyRoutemapHighlight();
+  const route = _routemapRoutes.find(r => r.id === routeId);
+  if (route) openRoutemapDetailPanel(route, focusIdx);
+}
+function routemapStopKey(route, idx) { return _routemapCurrentDomain + '#' + route.id + '#' + idx; }
+// closeAllSidePanels()에 참여하므로 레이어/검색/용어정리/단원맵 중 하나를 열면 이 패널도
+// 닫힌다(상호배타 규칙, feedback_apply_ui_fixes_all_subjects 적용분). 그러나 화면 전환
+// (자료실↔뷰어↔개념항로) 함수들은 전부 closeAllSidePanels()를 호출하지 않으므로, 이 패널은
+// 화면을 오가는 동안에는 계속 열려 있다(작업지시문에서 요구한 동작).
+function openRoutemapDetailPanel(route, focusIdx) {
+  closeAllSidePanels();
+  document.getElementById('routemap-detail-panel').classList.add('open');
+  renderRoutemapDetailPanel(route, focusIdx);
+}
+function closeRoutemapDetailPanel() {
+  const panel = document.getElementById('routemap-detail-panel');
+  if (panel) panel.classList.remove('open');
+}
+function renderRoutemapDetailPanel(route, focusIdx) {
+  document.getElementById('rm-detail-title').textContent = '🧭 ' + route.name;
+  let html = '<div class="detail-route"><span class="dot" style="background:var(' + route.colorVar + ')"></span>' + escapeHtml(route.name) + '</div>';
+  html += '<p class="route-desc">' + escapeHtml(route.desc) + '</p>';
+  html += '<div class="detail-list">';
+  route.stops.forEach((stop, idx) => {
+    const key = routemapStopKey(route, idx);
+    if (!(key in _routemapExpanded)) _routemapExpanded[key] = true;
+    const isOpen = _routemapExpanded[key];
+    const isSelected = key === (focusIdx !== undefined && focusIdx !== null ? routemapStopKey(route, focusIdx) : _routemapSelectedKey);
+    html += '<div class="accordion-item' + (isOpen ? '' : ' closed') + (isSelected ? ' selected' : '') + '" data-key="' + key + '" id="rm-item-' + key + '" style="--item-accent:var(' + route.colorVar + ')">';
+    html += '<div class="accordion-head"><div><div class="accordion-stage">' + escapeHtml(stop.stage) + '단계 · ' + escapeHtml(stop.label) + '</div>';
+    html += '<div class="accordion-meta">' + escapeHtml(stop.unit) + '</div>';
+    html += '<button type="button" class="page-link" data-stage="' + escapeHtml(stop.stage) + '" data-range="' + escapeHtml(stop.range) + '">📄 ' + escapeHtml(stop.range) + ' 교재 보기</button>';
+    html += '</div><span class="accordion-chevron">▾</span></div>';
+    html += '<div class="accordion-body">';
+    html += '<div class="detail-section"><h3>학습목표</h3><p>' + escapeHtml(stop.objective) + '</p></div>';
+    html += '<div class="detail-section"><h3>학습내용</h3><p>' + escapeHtml(stop.content) + '</p></div>';
+    html += '<div class="detail-section"><h3>핵심포인트</h3><p>' + escapeHtml(stop.keypoints) + '</p></div>';
+    if (stop.estimated) html += '<div class="estimated-note">이 단원은 전사 텍스트에 제목 헤더가 없어, 실제 지문 내용을 근거로 단원명·경계를 추정했습니다.</div>';
+    html += '</div></div>';
+  });
+  html += '</div>';
+  const body = document.getElementById('rm-detail-body');
+  body.innerHTML = html;
+  body.querySelectorAll('.accordion-item').forEach(itemEl => {
+    itemEl.querySelector('.accordion-head').addEventListener('click', () => {
+      const k = itemEl.getAttribute('data-key');
+      _routemapExpanded[k] = !_routemapExpanded[k];
+      itemEl.classList.toggle('closed', !_routemapExpanded[k]);
+      markRoutemapSelected(k);
+    });
+  });
+  body.querySelectorAll('.page-link').forEach(btn => {
+    btn.addEventListener('click', e => {
+      e.stopPropagation();
+      routemapJumpToPage(btn.getAttribute('data-stage'), btn.getAttribute('data-range'));
+    });
+  });
+  if (focusIdx !== undefined && focusIdx !== null) {
+    const fkey = routemapStopKey(route, focusIdx);
+    _routemapExpanded[fkey] = true;
+    markRoutemapSelected(fkey);
+    const itemEl = document.getElementById('rm-item-' + fkey);
+    if (itemEl) { itemEl.classList.remove('closed'); setTimeout(() => itemEl.scrollIntoView({ behavior: 'smooth', block: 'start' }), 30); }
+  }
+}
+function markRoutemapSelected(key) {
+  _routemapSelectedKey = key;
+  document.querySelectorAll('#rm-detail-body .accordion-item.selected').forEach(el => el.classList.remove('selected'));
+  const el = key ? document.getElementById('rm-item-' + key) : null;
+  if (el) el.classList.add('selected');
+}
+function rmToggleTable() {
+  const wrap = document.getElementById('rm-table-wrap');
+  const mapScroll = document.querySelector('#routemap-screen .map-scroll');
+  const hint = document.querySelector('#routemap-screen .rm-scroll-hint');
+  const btn = document.getElementById('rm-table-toggle');
+  const willShow = wrap.hidden; // 지금 숨겨져 있으면 이번 클릭으로 표에 자리를 내준다
+  wrap.hidden = !willShow;
+  mapScroll.style.display = willShow ? 'none' : '';
+  hint.style.display = willShow ? 'none' : '';
+  btn.textContent = willShow ? '지도로 보기' : '표로 보기';
+}
+// "N쪽 교재 보기" — 지도 화면은 숨기고 해당 단계 교재를 열어 그 쪽으로 바로 이동한다.
+// 상세 패널(routemap-detail-panel)은 건드리지 않으므로 책을 보는 동안에도 계속 열려 있다.
+// science-unitmap.json의 "쪽수"(start/end) 표기가 단계마다 다른 기준으로 되어 있다
+// (실제 데이터로 확인함, 2026-11-07) — A단계만 캡처면(a/b) 번호와 1:1이고, 나머지
+// 10개 단계(3A/2A/B/C/D/E/F/G/H/I)는 장(시트) 번호라서 실제 캡처면 pdfPage로 가려면
+// (쪽수-1)×2+1 변환이 필요하다. 단원맵 패널의 "이 단원 페이지 보기"(goToPdfPage((u.start-1)*2+1))도
+// 같은 변환을 쓰고 있어 그 전례를 그대로 따른다 — 단, 그 버튼은 모든 단계에 이 공식을
+// 무조건 적용해서 A단계에서는 오히려 틀릴 수 있다(알려진 한계, 여기서는 안 건드림).
+const ROUTEMAP_FACE_NUMBERED_STAGES = { 'A': true }; // 이 단계만 쪽수=캡처면 번호 1:1
+function routemapPageToPdf(stage, pageNum) {
+  if (ROUTEMAP_FACE_NUMBERED_STAGES[stage]) return pageNum;
+  return (pageNum - 1) * 2 + 1;
+}
+function routemapJumpToPage(stage, rangeStr) {
+  const bid = ROUTEMAP_STAGE_TO_BOOKID[stage];
+  const m = bid && materialByBookId(bid);
+  if (!m) { showToast('이 단계 교재를 찾을 수 없습니다'); return; }
+  const startSheetOrFace = parseInt(String(rangeStr), 10);
+  const pdfPage = startSheetOrFace ? routemapPageToPdf(stage, startSheetOrFace) : null;
+  document.getElementById('routemap-screen').classList.remove('show');
+  _routemapReturnScreen = 'viewer';
+  openMaterial(m.file || bookIdOf(m)).then(() => {
+    if (pdfPage) goToPdfPage(pdfPage);
+    showToast('📖 이동');
+  });
 }
 
 /* ══ PDF 텍스트 검색 ══════════════════════════════════════ */
