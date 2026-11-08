@@ -25,6 +25,9 @@ const MATERIALS = [
   { bookId: 'kumon-korean-022-H1', kind: 'image', subject: '국어', stage: 'H1', range: '1~200장', icon: '📖', category: 'textbook', label: 'H1단계 교재 원본+정답 (전체 200장)' },
   { bookId: 'kumon-korean-023-H2', kind: 'image', subject: '국어', stage: 'H2', range: '1~200장', icon: '📖', category: 'textbook', label: 'H2단계 교재 원본+정답 (전체 200장)' },
   { bookId: 'kumon-korean-024-I1', kind: 'image', subject: '국어', stage: 'I1', range: '1~200장', icon: '📖', category: 'textbook', label: 'I1단계 교재 원본+정답 (전체 200장)' },
+  { bookId: 'kumon-korean-025-I2', kind: 'image', subject: '국어', stage: 'I2', range: '1~200장', icon: '📖', category: 'textbook', label: 'I2단계 교재 원본+정답 (전체 200장)' },
+  { bookId: 'kumon-korean-026-J', kind: 'image', subject: '국어', stage: 'J', range: '1~200장', icon: '📖', category: 'textbook', label: 'J단계 교재 원본+정답 (전체 200장)' },
+  { bookId: 'kumon-korean-027-K', kind: 'image', subject: '국어', stage: 'K', range: '1~200장', icon: '📖', category: 'textbook', label: 'K단계 교재 원본+정답 (전체 200장)' },
 ];
 function bookIdOf(material) { return material.bookId || material.file.replace(/\.pdf$/i, ''); }
 function materialByBookId(bookId) { return MATERIALS.find(m => bookIdOf(m) === bookId) || null; }
@@ -302,6 +305,54 @@ const PAGE_MAPS = {};
     }
   }
   PAGE_MAPS['kumon-korean-024-I1'] = entries;
+})();
+
+// kumon-korean-025-I2(국어 I2, 200장=400면, 1a,1b,2a,2b...200a,200b) — 위와 동일한 방식.
+(function buildK025PageI2Map() {
+  const TOTAL_SHEETS = 200; // 업로드 스크립트 콘솔 출력(2026-11-09) 기준 — 바뀌면 여기만 고칠 것
+  const SIDES = ['a', 'b'];
+  const entries = [];
+  let pdfPage = 0;
+  for (let sheet = 1; sheet <= TOTAL_SHEETS; sheet++) {
+    for (const side of SIDES) {
+      pdfPage++;
+      const label = sheet + side;
+      entries.push({ pdf: pdfPage, label, sub: 'I2 ' + label, type: 'content' });
+    }
+  }
+  PAGE_MAPS['kumon-korean-025-I2'] = entries;
+})();
+
+// kumon-korean-026-J(국어 J, 200장=400면, 1a,1b,2a,2b...200a,200b) — 위와 동일한 방식.
+(function buildK026PageJMap() {
+  const TOTAL_SHEETS = 200; // 업로드 스크립트 콘솔 출력(2026-11-09) 기준 — 바뀌면 여기만 고칠 것
+  const SIDES = ['a', 'b'];
+  const entries = [];
+  let pdfPage = 0;
+  for (let sheet = 1; sheet <= TOTAL_SHEETS; sheet++) {
+    for (const side of SIDES) {
+      pdfPage++;
+      const label = sheet + side;
+      entries.push({ pdf: pdfPage, label, sub: 'J ' + label, type: 'content' });
+    }
+  }
+  PAGE_MAPS['kumon-korean-026-J'] = entries;
+})();
+
+// kumon-korean-027-K(국어 K, 200장=400면, 1a,1b,2a,2b...200a,200b) — 위와 동일한 방식.
+(function buildK027PageKMap() {
+  const TOTAL_SHEETS = 200; // 업로드 스크립트 콘솔 출력(2026-11-09) 기준 — 바뀌면 여기만 고칠 것
+  const SIDES = ['a', 'b'];
+  const entries = [];
+  let pdfPage = 0;
+  for (let sheet = 1; sheet <= TOTAL_SHEETS; sheet++) {
+    for (const side of SIDES) {
+      pdfPage++;
+      const label = sheet + side;
+      entries.push({ pdf: pdfPage, label, sub: 'K ' + label, type: 'content' });
+    }
+  }
+  PAGE_MAPS['kumon-korean-027-K'] = entries;
 })();
 
 // PAGE_MAPS에서 검색 인덱스를 자동 생성 — PAGE_MAPS가 채워지는 순간 검색도 자동으로 살아난다.
