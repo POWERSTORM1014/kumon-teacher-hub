@@ -8,6 +8,13 @@
 const MATERIALS = [
   { file: 'kumon-korean-E1-101-110.pdf', subject: '국어', stage: 'E1', range: 'E1-101~110', icon: '📖', category: 'textbook', label: 'E1단계 교재 (101~110)', archived: true }, // 초기 샘플(구방식) — 자료실 화면에서 숨김(2026-10-11)
   { file: 'kumon-korean-G1-041-050.pdf', subject: '국어', stage: 'G1', range: 'G1-041~050', icon: '📚', category: 'textbook', label: 'G1단계 교재 (041~050)', archived: true }, // 초기 샘플(구방식) — 자료실 화면에서 숨김(2026-10-11)
+  { bookId: 'kumon-korean-001-8A', kind: 'image', subject: '국어', stage: '8A', range: '1~200장', icon: '📖', category: 'textbook', label: '8A단계 교재 원본+정답 (전체 200장)' },
+  { bookId: 'kumon-korean-002-7A', kind: 'image', subject: '국어', stage: '7A', range: '1~200장', icon: '📖', category: 'textbook', label: '7A단계 교재 원본+정답 (전체 200장)' },
+  { bookId: 'kumon-korean-003-6A', kind: 'image', subject: '국어', stage: '6A', range: '1~200장', icon: '📖', category: 'textbook', label: '6A단계 교재 원본+정답 (전체 200장)' },
+  { bookId: 'kumon-korean-004-5A', kind: 'image', subject: '국어', stage: '5A', range: '1~200장', icon: '📖', category: 'textbook', label: '5A단계 교재 원본+정답 (전체 200장)' },
+  { bookId: 'kumon-korean-005-4A', kind: 'image', subject: '국어', stage: '4A', range: '1~200장', icon: '📖', category: 'textbook', label: '4A단계 교재 원본+정답 (전체 200장)' },
+  { bookId: 'kumon-korean-006-3A', kind: 'image', subject: '국어', stage: '3A', range: '1~200장', icon: '📖', category: 'textbook', label: '3A단계 교재 원본+정답 (전체 200장)' },
+  { bookId: 'kumon-korean-007-2A', kind: 'image', subject: '국어', stage: '2A', range: '1~200장', icon: '📖', category: 'textbook', label: '2A단계 교재 원본+정답 (전체 200장)' },
   { bookId: 'kumon-korean-008-A1', kind: 'image', subject: '국어', stage: 'A1', range: '1~200장', icon: '📖', category: 'textbook', label: 'A1단계 교재 원본+정답 (전체 200장)' },
   { bookId: 'kumon-korean-009-A2', kind: 'image', subject: '국어', stage: 'A2', range: '1~200장', icon: '📖', category: 'textbook', label: 'A2단계 교재 원본+정답 (전체 200장)' },
   { bookId: 'kumon-korean-010-B1', kind: 'image', subject: '국어', stage: 'B1', range: '1~200장', icon: '📖', category: 'textbook', label: 'B1단계 교재 원본+정답 (전체 200장)' },
@@ -35,6 +42,118 @@ function materialByBookId(bookId) { return MATERIALS.find(m => bookIdOf(m) === b
 
 // 교재별 페이지 지도(PDF 실제 페이지 번호 → 표시 라벨) — 아직 정리된 게 없음.
 const PAGE_MAPS = {};
+
+// kumon-korean-001-8A(국어 8A, 200장=400면, 1a,1b,2a,2b...200a,200b) — 과학/일어와 같은 방식.
+(function buildK001Page8AMap() {
+  const TOTAL_SHEETS = 200; // 업로드 스크립트 콘솔 출력(2026-11-10) 기준 — 바뀌면 여기만 고칠 것
+  const SIDES = ['a', 'b'];
+  const entries = [];
+  let pdfPage = 0;
+  for (let sheet = 1; sheet <= TOTAL_SHEETS; sheet++) {
+    for (const side of SIDES) {
+      pdfPage++;
+      const label = sheet + side;
+      entries.push({ pdf: pdfPage, label, sub: '8A ' + label, type: 'content' });
+    }
+  }
+  PAGE_MAPS['kumon-korean-001-8A'] = entries;
+})();
+
+// kumon-korean-002-7A(국어 7A, 200장=400면, 1a,1b,2a,2b...200a,200b) — 위와 동일한 방식.
+(function buildK002Page7AMap() {
+  const TOTAL_SHEETS = 200; // 업로드 스크립트 콘솔 출력(2026-11-10) 기준 — 바뀌면 여기만 고칠 것
+  const SIDES = ['a', 'b'];
+  const entries = [];
+  let pdfPage = 0;
+  for (let sheet = 1; sheet <= TOTAL_SHEETS; sheet++) {
+    for (const side of SIDES) {
+      pdfPage++;
+      const label = sheet + side;
+      entries.push({ pdf: pdfPage, label, sub: '7A ' + label, type: 'content' });
+    }
+  }
+  PAGE_MAPS['kumon-korean-002-7A'] = entries;
+})();
+
+// kumon-korean-003-6A(국어 6A, 200장=400면, 1a,1b,2a,2b...200a,200b) — 위와 동일한 방식.
+(function buildK003Page6AMap() {
+  const TOTAL_SHEETS = 200; // 업로드 스크립트 콘솔 출력(2026-11-10) 기준 — 바뀌면 여기만 고칠 것
+  const SIDES = ['a', 'b'];
+  const entries = [];
+  let pdfPage = 0;
+  for (let sheet = 1; sheet <= TOTAL_SHEETS; sheet++) {
+    for (const side of SIDES) {
+      pdfPage++;
+      const label = sheet + side;
+      entries.push({ pdf: pdfPage, label, sub: '6A ' + label, type: 'content' });
+    }
+  }
+  PAGE_MAPS['kumon-korean-003-6A'] = entries;
+})();
+
+// kumon-korean-004-5A(국어 5A, 200장=400면, 1a,1b,2a,2b...200a,200b) — 위와 동일한 방식.
+(function buildK004Page5AMap() {
+  const TOTAL_SHEETS = 200; // 업로드 스크립트 콘솔 출력(2026-11-10) 기준 — 바뀌면 여기만 고칠 것
+  const SIDES = ['a', 'b'];
+  const entries = [];
+  let pdfPage = 0;
+  for (let sheet = 1; sheet <= TOTAL_SHEETS; sheet++) {
+    for (const side of SIDES) {
+      pdfPage++;
+      const label = sheet + side;
+      entries.push({ pdf: pdfPage, label, sub: '5A ' + label, type: 'content' });
+    }
+  }
+  PAGE_MAPS['kumon-korean-004-5A'] = entries;
+})();
+
+// kumon-korean-005-4A(국어 4A, 200장=400면, 1a,1b,2a,2b...200a,200b) — 위와 동일한 방식.
+(function buildK005Page4AMap() {
+  const TOTAL_SHEETS = 200; // 업로드 스크립트 콘솔 출력(2026-11-10) 기준 — 바뀌면 여기만 고칠 것
+  const SIDES = ['a', 'b'];
+  const entries = [];
+  let pdfPage = 0;
+  for (let sheet = 1; sheet <= TOTAL_SHEETS; sheet++) {
+    for (const side of SIDES) {
+      pdfPage++;
+      const label = sheet + side;
+      entries.push({ pdf: pdfPage, label, sub: '4A ' + label, type: 'content' });
+    }
+  }
+  PAGE_MAPS['kumon-korean-005-4A'] = entries;
+})();
+
+// kumon-korean-006-3A(국어 3A, 200장=400면, 1a,1b,2a,2b...200a,200b) — 위와 동일한 방식.
+(function buildK006Page3AMap() {
+  const TOTAL_SHEETS = 200; // 업로드 스크립트 콘솔 출력(2026-11-11) 기준 — 바뀌면 여기만 고칠 것
+  const SIDES = ['a', 'b'];
+  const entries = [];
+  let pdfPage = 0;
+  for (let sheet = 1; sheet <= TOTAL_SHEETS; sheet++) {
+    for (const side of SIDES) {
+      pdfPage++;
+      const label = sheet + side;
+      entries.push({ pdf: pdfPage, label, sub: '3A ' + label, type: 'content' });
+    }
+  }
+  PAGE_MAPS['kumon-korean-006-3A'] = entries;
+})();
+
+// kumon-korean-007-2A(국어 2A, 200장=400면, 1a,1b,2a,2b...200a,200b) — 위와 동일한 방식.
+(function buildK007Page2AMap() {
+  const TOTAL_SHEETS = 200; // 업로드 스크립트 콘솔 출력(2026-11-11) 기준 — 바뀌면 여기만 고칠 것
+  const SIDES = ['a', 'b'];
+  const entries = [];
+  let pdfPage = 0;
+  for (let sheet = 1; sheet <= TOTAL_SHEETS; sheet++) {
+    for (const side of SIDES) {
+      pdfPage++;
+      const label = sheet + side;
+      entries.push({ pdf: pdfPage, label, sub: '2A ' + label, type: 'content' });
+    }
+  }
+  PAGE_MAPS['kumon-korean-007-2A'] = entries;
+})();
 
 // kumon-korean-008-A1(국어 A1, 200장=400면, 1a,1b,2a,2b...200a,200b) — 과학/일어와 같은 방식.
 (function buildK008PageA1Map() {
