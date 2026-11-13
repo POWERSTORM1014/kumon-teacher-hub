@@ -458,8 +458,10 @@ function scoreSnippetSentence(s) {
   if (/^\d+\s/.test(s.trim())) score -= 3; // "1 다음 글을 읽고" 같은 지시문
   return score;
 }
+// 검색어 자체에 포함된 공백도 무시하도록 먼저 지우고, 남은 글자마다 \s*를 끼워 넣는다
+// (국어 뷰어와 공통 수정, 2026-11-14 — "빈칸을완성"으로 쳐도 "빈칸을 완성"과 매칭됨).
 function buildSnippet(text, q) {
-  const flexSrc = q.split('').map(ch => ch.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')).join('\\s*');
+  const flexSrc = q.replace(/\s+/g, '').split('').map(ch => ch.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')).join('\\s*');
   const flexRe = new RegExp(flexSrc, 'i');
   const flexReG = new RegExp(flexSrc, 'gi');
   const allMatches = [...text.matchAll(new RegExp(flexSrc, 'gi'))];
@@ -531,7 +533,7 @@ function buildAutoFlowCard(q, stageFirstMap) {
 async function matchContentResults(q, excludeKeys) {
   const index = await loadContentIndex();
   if (!index.length) return { ready: false, html: '' };
-  const flexSrc = q.split('').map(ch => ch.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')).join('\\s*');
+  const flexSrc = q.replace(/\s+/g, '').split('').map(ch => ch.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')).join('\\s*');
   const existsRe = new RegExp(flexSrc, 'i');
   const all = [];                   // 평면 목록용(재정렬용으로 넉넉히 모으되 상한 30)
   const stageFirst = new Map();     // bookId -> {item, hl}, 단계별 대표 매치(상한 없음)

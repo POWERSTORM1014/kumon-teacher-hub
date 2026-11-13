@@ -306,10 +306,12 @@ function extractSentence(text, idx, matchLen) {
   const s = Math.max(0, idx - 15), e = idx + matchLen + 25;
   return { text: text.slice(s, e).replace(/\n/g, ' '), prefix: s > 0 ? '…' : '', suffix: e < text.length ? '…' : '' };
 }
-// 검색어 글자 사이에 공백이 있든 없든 본문과 매칭되게 한다(글자마다 \s*를 끼워 넣은
-// 느슨한 정규식). 해당 페이지에서 처음 찾은 매치를 문장 단위로 잘라 하이라이트한다.
+// 검색어 글자 사이에 공백이 있든 없든, 검색어 자체에 입력한 공백도 전부 무시하고
+// 본문과 매칭되게 한다(검색어의 공백을 먼저 지우고, 남은 글자마다 \s*를 끼워 넣은
+// 느슨한 정규식 — "빈칸을완성"으로 쳐도 "빈칸을 완성"과 매칭됨). 해당 페이지에서
+// 처음 찾은 매치를 문장 단위로 잘라 하이라이트한다.
 function buildSnippet(text, q) {
-  const flexSrc = q.split('').map(ch => ch.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')).join('\\s*');
+  const flexSrc = q.replace(/\s+/g, '').split('').map(ch => ch.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')).join('\\s*');
   const flexReG = new RegExp(flexSrc, 'gi');
   const m = flexReG.exec(text);
   if (!m) return null;
@@ -323,7 +325,7 @@ async function matchContentResults(q, excludeKeys) {
   if (CONTENT_SEARCH_STOPWORDS.has(qNorm)) return { ready: true, html: '' }; // 전사 메타 표시어 자체는 검색 의미 없음
   const index = await loadContentIndex();
   if (!index.length) return { ready: false, html: '' };
-  const flexSrc = qNorm.split('').map(ch => ch.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')).join('\\s*');
+  const flexSrc = qNorm.replace(/\s+/g, '').split('').map(ch => ch.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')).join('\\s*');
   const existsRe = new RegExp(flexSrc, 'i');
   const seen = new Set(excludeKeys);
   const results = [];
