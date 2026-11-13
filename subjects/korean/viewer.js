@@ -269,11 +269,23 @@ async function openMyFile(id) {
    가져오지 않고 핵심 본문 검색만 반영함(2026-11-13). */
 let _contentIndexCache = null;      // null=아직 시도 안 함, []=시도했지만 실패(색인 없음), [...]=로드 완료
 let _contentIndexPromise = null;
+// 전사 텍스트에 섞여 있는 "[빈칸]" 같은 메타 표시어는 실제 교재 내용이 아니라 전사 과정의
+// 표식이다 — 거의 모든 면에 등장하므로 이 단어 자체를 검색하면 의미 없이 결과가 쏟아진다.
+// 검색어가 이 표식과 정확히 일치할 때만 본문 검색을 건너뛴다(라벨 검색은 그대로 유지).
+const CONTENT_SEARCH_STOPWORDS = new Set(['빈칸', '[빈칸]', '판독 어려움', '판독어려움', '본문 없음', '본문없음', '서술형']);
+// 한글은 입력 방식에 따라 NFC/NFD로 다르게 조합될 수 있어 그대로 비교하면 눈에는 같아
+// 보이는 글자인데도 매칭이 안 어긋나는 경우가 있다 — 색인 로드 시 한 번만 NFC로
+// 정규화해 캐싱해 두면 이후 모든 검색에서 일관되게 맞는다.
 function loadContentIndex() {
   if (_contentIndexPromise) return _contentIndexPromise;
   _contentIndexPromise = fetch('../../_search-index/' + CURRENT_SUBJECT_ID + '.json', { cache: 'no-store' })
     .then(res => { if (!res.ok) throw new Error('no index'); return res.json(); })
-    .then(data => { _contentIndexCache = Array.isArray(data) ? data : []; return _contentIndexCache; })
+    .then(data => {
+      const arr = Array.isArray(data) ? data : [];
+      arr.forEach(it => { if (typeof it.text === 'string') it.text = it.text.normalize('NFC'); });
+      _contentIndexCache = arr;
+      return _contentIndexCache;
+    })
     .catch(() => { _contentIndexCache = []; return _contentIndexCache; });
   return _contentIndexPromise;
 }
@@ -307,9 +319,11 @@ function buildSnippet(text, q) {
 }
 // 반환: {ready:false}=이 과목은 아직 본문 색인이 없음(조용히 무시), {ready:true, html}=완료.
 async function matchContentResults(q, excludeKeys) {
+  const qNorm = q.normalize('NFC');
+  if (CONTENT_SEARCH_STOPWORDS.has(qNorm)) return { ready: true, html: '' }; // 전사 메타 표시어 자체는 검색 의미 없음
   const index = await loadContentIndex();
   if (!index.length) return { ready: false, html: '' };
-  const flexSrc = q.split('').map(ch => ch.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')).join('\\s*');
+  const flexSrc = qNorm.split('').map(ch => ch.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')).join('\\s*');
   const existsRe = new RegExp(flexSrc, 'i');
   const seen = new Set(excludeKeys);
   const results = [];
@@ -318,7 +332,7 @@ async function matchContentResults(q, excludeKeys) {
     const key = item.bookId + '|' + item.pdfPage;
     if (seen.has(key)) continue;
     if (!existsRe.test(item.text)) continue;
-    const hl = buildSnippet(item.text, q);
+    const hl = buildSnippet(item.text, qNorm);
     if (hl === null) continue;
     results.push({ item, hl });
     seen.add(key);
