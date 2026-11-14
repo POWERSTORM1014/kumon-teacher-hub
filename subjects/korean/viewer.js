@@ -547,6 +547,7 @@ async function seedAnswerLayerIfNeeded(pos, entry) {
   if (_seedChecked.has(dedupKey)) return;
   _seedChecked.add(dedupKey);
 
+  if (imageBookMeta.hasOverlay === false) return; // 정답 오버레이가 없는 책(예: 지도용 참고자료) — 시딩할 레이어 자체가 없음
   const rec = Engine.Elements.record(pos);
   const isPristineLocal = rec.layers.length === 1 && rec.layers[0].id === 'default' && !Object.keys(rec.strokes).length;
   if (!isPristineLocal) return; // 이 기기에 이미 로컬 기록이 있다 — 사용자/이전 시딩 결과를 건드리지 않음
