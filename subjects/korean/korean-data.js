@@ -36,7 +36,7 @@ const MATERIALS = [
   { bookId: 'kumon-korean-026-J', kind: 'image', subject: '국어', stage: 'J', range: '1~200장', icon: '📖', category: 'textbook', label: 'J단계 교재 원본+정답 (전체 200장)' },
   { bookId: 'kumon-korean-027-K', kind: 'image', subject: '국어', stage: 'K', range: '1~200장', icon: '📖', category: 'textbook', label: 'K단계 교재 원본+정답 (전체 200장)' },
   { bookId: 'kumon-korean-028-L', kind: 'image', subject: '국어', stage: 'L', range: '1~200장', icon: '📖', category: 'textbook', label: 'L단계 교재 원본+정답 (전체 200장)' },
-  { bookId: 'kumon-korean-guide-001', kind: 'image', subject: '국어', stage: '지도자료', range: '1~72쪽', icon: '🗂️', category: 'textbook', label: '교재 내용과 지도 유의점 (사외비, 재구성판 전체 72쪽)' },
+  { bookId: 'kumon-korean-guide-001', kind: 'image', subject: '국어', stage: '지도자료', range: '1~72쪽', icon: '🗂️', category: 'textbook', label: '교재 내용과 지도 유의점 (사외비, 원문 재구성판 전체 72쪽)' },
 ];
 function bookIdOf(material) { return material.bookId || material.file.replace(/\.pdf$/i, ''); }
 function materialByBookId(bookId) { return MATERIALS.find(m => bookIdOf(m) === bookId) || null; }
