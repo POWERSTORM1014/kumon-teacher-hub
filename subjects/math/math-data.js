@@ -13,6 +13,11 @@ const MATERIALS = [
   { file: 'kumon-math-D-131-140.pdf', subject: '수학', stage: 'D', range: 'D131~D140', icon: '➗', category: 'textbook', label: 'D단계 교재 (D131~D140)', archived: true }, // 초기 샘플(구방식) — 자료실 화면에서 숨김(2026-10-11)
   { file: 'kumon-math-E-171-180.pdf', subject: '수학', stage: 'E', range: 'E171~E180', icon: '✖️', category: 'textbook', label: 'E단계 교재 (E171~E180)', archived: true }, // 초기 샘플(구방식) — 자료실 화면에서 숨김(2026-10-11)
   { file: 'kumon-math-H-081-090.pdf', subject: '수학', stage: 'H', range: 'H81~H90', icon: '📐', category: 'textbook', label: 'H단계 교재 (H81~H90)', archived: true }, // 초기 샘플(구방식) — 자료실 화면에서 숨김(2026-10-11)
+  { bookId: 'kumon-math-001-6A', kind: 'image', subject: '수학', stage: '6A', range: '1~200장', icon: '🔢', category: 'textbook', label: '6A단계 교재 원본+정답 (전체 200장)' },
+  { bookId: 'kumon-math-002-5A', kind: 'image', subject: '수학', stage: '5A', range: '1~200장', icon: '🔢', category: 'textbook', label: '5A단계 교재 원본+정답 (전체 200장)' },
+  { bookId: 'kumon-math-003-4A', kind: 'image', subject: '수학', stage: '4A', range: '1~200장', icon: '🔢', category: 'textbook', label: '4A단계 교재 원본+정답 (전체 200장)' },
+  { bookId: 'kumon-math-004-3A', kind: 'image', subject: '수학', stage: '3A', range: '1~200장', icon: '🔢', category: 'textbook', label: '3A단계 교재 원본+정답 (전체 200장)' },
+  { bookId: 'kumon-math-005-2A', kind: 'image', subject: '수학', stage: '2A', range: '1~200장', icon: '🔢', category: 'textbook', label: '2A단계 교재 원본+정답 (전체 200장)' },
   { bookId: 'kumon-math-015-J', kind: 'image', subject: '수학', stage: 'J', range: '1~200장', icon: '🔢', category: 'textbook', label: 'J단계 교재 원본+정답 (전체 200장)' },
   { bookId: 'kumon-math-016-K', kind: 'image', subject: '수학', stage: 'K', range: '1~200장', icon: '🔢', category: 'textbook', label: 'K단계 교재 원본+정답 (전체 200장)' },
   { bookId: 'kumon-math-017-L', kind: 'image', subject: '수학', stage: 'L', range: '1~200장', icon: '🔢', category: 'textbook', label: 'L단계 교재 원본+정답 (전체 200장)' },
@@ -26,6 +31,82 @@ function materialByBookId(bookId) { return MATERIALS.find(m => bookIdOf(m) === b
 // 교재별 페이지 지도(PDF 실제 페이지 번호 → 표시 라벨). kind:'image' 교재도 똑같이
 // pdf 필드를 키로 쓴다(일어 데이터와 동일한 이유 — viewer.js 재사용).
 const PAGE_MAPS = {};
+
+// kumon-math-001-6A ~ 005-2A(저학년 6A~2A, 각 200장=400면) — 위와 동일한 방식.
+(function buildM001Page6AMap() {
+  const TOTAL_SHEETS = 200; // 업로드 스크립트 콘솔 출력(2026-11-22) 기준 — 바뀌면 여기만 고칠 것
+  const SIDES = ['a', 'b'];
+  const entries = [];
+  let pdfPage = 0;
+  for (let sheet = 1; sheet <= TOTAL_SHEETS; sheet++) {
+    for (const side of SIDES) {
+      pdfPage++;
+      const label = sheet + side;
+      entries.push({ pdf: pdfPage, label, sub: '6A ' + label, type: 'content' });
+    }
+  }
+  PAGE_MAPS['kumon-math-001-6A'] = entries;
+})();
+
+(function buildM002Page5AMap() {
+  const TOTAL_SHEETS = 200;
+  const SIDES = ['a', 'b'];
+  const entries = [];
+  let pdfPage = 0;
+  for (let sheet = 1; sheet <= TOTAL_SHEETS; sheet++) {
+    for (const side of SIDES) {
+      pdfPage++;
+      const label = sheet + side;
+      entries.push({ pdf: pdfPage, label, sub: '5A ' + label, type: 'content' });
+    }
+  }
+  PAGE_MAPS['kumon-math-002-5A'] = entries;
+})();
+
+(function buildM003Page4AMap() {
+  const TOTAL_SHEETS = 200;
+  const SIDES = ['a', 'b'];
+  const entries = [];
+  let pdfPage = 0;
+  for (let sheet = 1; sheet <= TOTAL_SHEETS; sheet++) {
+    for (const side of SIDES) {
+      pdfPage++;
+      const label = sheet + side;
+      entries.push({ pdf: pdfPage, label, sub: '4A ' + label, type: 'content' });
+    }
+  }
+  PAGE_MAPS['kumon-math-003-4A'] = entries;
+})();
+
+(function buildM004Page3AMap() {
+  const TOTAL_SHEETS = 200;
+  const SIDES = ['a', 'b'];
+  const entries = [];
+  let pdfPage = 0;
+  for (let sheet = 1; sheet <= TOTAL_SHEETS; sheet++) {
+    for (const side of SIDES) {
+      pdfPage++;
+      const label = sheet + side;
+      entries.push({ pdf: pdfPage, label, sub: '3A ' + label, type: 'content' });
+    }
+  }
+  PAGE_MAPS['kumon-math-004-3A'] = entries;
+})();
+
+(function buildM005Page2AMap() {
+  const TOTAL_SHEETS = 200;
+  const SIDES = ['a', 'b'];
+  const entries = [];
+  let pdfPage = 0;
+  for (let sheet = 1; sheet <= TOTAL_SHEETS; sheet++) {
+    for (const side of SIDES) {
+      pdfPage++;
+      const label = sheet + side;
+      entries.push({ pdf: pdfPage, label, sub: '2A ' + label, type: 'content' });
+    }
+  }
+  PAGE_MAPS['kumon-math-005-2A'] = entries;
+})();
 
 // kumon-math-015-J(수학 J, 200장=400면, 1a,1b,2a,2b...200a,200b) — 업로드
 // 스크립트가 보고한 totalPages(200)·sides(a,b) 그대로 기계적으로 생성.
