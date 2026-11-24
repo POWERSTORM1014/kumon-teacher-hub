@@ -24,6 +24,13 @@ const MATERIALS = [
   { bookId: 'kumon-math-018-M', kind: 'image', subject: '수학', stage: 'M', range: '1~200장', icon: '🔢', category: 'textbook', label: 'M단계 교재 원본+정답 (전체 200장)' },
   { bookId: 'kumon-math-019-N', kind: 'image', subject: '수학', stage: 'N', range: '1~200장', icon: '🔢', category: 'textbook', label: 'N단계 교재 원본+정답 (전체 200장)' },
   { bookId: 'kumon-math-020-O', kind: 'image', subject: '수학', stage: 'O', range: '1~200장', icon: '🔢', category: 'textbook', label: 'O단계 교재 원본+정답 (전체 200장)' },
+  { bookId: 'kumon-math-006-A', kind: 'image', subject: '수학', stage: 'A', range: '1~200장', icon: '🔢', category: 'textbook', label: 'A단계 교재 원본+정답 (전체 200장)' },
+  { bookId: 'kumon-math-007-B', kind: 'image', subject: '수학', stage: 'B', range: '1~200장', icon: '🔢', category: 'textbook', label: 'B단계 교재 원본+정답 (전체 200장)' },
+  { bookId: 'kumon-math-008-C', kind: 'image', subject: '수학', stage: 'C', range: '1~200장', icon: '🔢', category: 'textbook', label: 'C단계 교재 원본+정답 (전체 200장)' },
+  { bookId: 'kumon-math-009-D', kind: 'image', subject: '수학', stage: 'D', range: '1~200장', icon: '🔢', category: 'textbook', label: 'D단계 교재 원본+정답 (전체 200장)' },
+  { bookId: 'kumon-math-010-E', kind: 'image', subject: '수학', stage: 'E', range: '1~200장', icon: '🔢', category: 'textbook', label: 'E단계 교재 원본+정답 (전체 200장)' },
+  { bookId: 'kumon-math-011-F', kind: 'image', subject: '수학', stage: 'F', range: '1~200장', icon: '🔢', category: 'textbook', label: 'F단계 교재 원본+정답 (전체 200장)' },
+  { bookId: 'kumon-math-012-G', kind: 'image', subject: '수학', stage: 'G', range: '1~200장', icon: '🔢', category: 'textbook', label: 'G단계 교재 원본+정답 (전체 200장)' },
 ];
 function bookIdOf(material) { return material.bookId || material.file.replace(/\.pdf$/i, ''); }
 function materialByBookId(bookId) { return MATERIALS.find(m => bookIdOf(m) === bookId) || null; }
@@ -203,6 +210,112 @@ const PAGE_MAPS = {};
     }
   }
   PAGE_MAPS['kumon-math-020-O'] = entries;
+})();
+
+// kumon-math-006-A ~ 012-G(A~G, 각 200장=400면) — 위와 동일한 방식.
+(function buildM006PageAMap() {
+  const TOTAL_SHEETS = 200; // 업로드 스크립트 콘솔 출력(2026-11-24) 기준 — 바뀌면 여기만 고칠 것
+  const SIDES = ['a', 'b'];
+  const entries = [];
+  let pdfPage = 0;
+  for (let sheet = 1; sheet <= TOTAL_SHEETS; sheet++) {
+    for (const side of SIDES) {
+      pdfPage++;
+      const label = sheet + side;
+      entries.push({ pdf: pdfPage, label, sub: 'A ' + label, type: 'content' });
+    }
+  }
+  PAGE_MAPS['kumon-math-006-A'] = entries;
+})();
+
+(function buildM007PageBMap() {
+  const TOTAL_SHEETS = 200;
+  const SIDES = ['a', 'b'];
+  const entries = [];
+  let pdfPage = 0;
+  for (let sheet = 1; sheet <= TOTAL_SHEETS; sheet++) {
+    for (const side of SIDES) {
+      pdfPage++;
+      const label = sheet + side;
+      entries.push({ pdf: pdfPage, label, sub: 'B ' + label, type: 'content' });
+    }
+  }
+  PAGE_MAPS['kumon-math-007-B'] = entries;
+})();
+
+(function buildM008PageCMap() {
+  const TOTAL_SHEETS = 200;
+  const SIDES = ['a', 'b'];
+  const entries = [];
+  let pdfPage = 0;
+  for (let sheet = 1; sheet <= TOTAL_SHEETS; sheet++) {
+    for (const side of SIDES) {
+      pdfPage++;
+      const label = sheet + side;
+      entries.push({ pdf: pdfPage, label, sub: 'C ' + label, type: 'content' });
+    }
+  }
+  PAGE_MAPS['kumon-math-008-C'] = entries;
+})();
+
+(function buildM009PageDMap() {
+  const TOTAL_SHEETS = 200;
+  const SIDES = ['a', 'b'];
+  const entries = [];
+  let pdfPage = 0;
+  for (let sheet = 1; sheet <= TOTAL_SHEETS; sheet++) {
+    for (const side of SIDES) {
+      pdfPage++;
+      const label = sheet + side;
+      entries.push({ pdf: pdfPage, label, sub: 'D ' + label, type: 'content' });
+    }
+  }
+  PAGE_MAPS['kumon-math-009-D'] = entries;
+})();
+
+(function buildM010PageEMap() {
+  const TOTAL_SHEETS = 200;
+  const SIDES = ['a', 'b'];
+  const entries = [];
+  let pdfPage = 0;
+  for (let sheet = 1; sheet <= TOTAL_SHEETS; sheet++) {
+    for (const side of SIDES) {
+      pdfPage++;
+      const label = sheet + side;
+      entries.push({ pdf: pdfPage, label, sub: 'E ' + label, type: 'content' });
+    }
+  }
+  PAGE_MAPS['kumon-math-010-E'] = entries;
+})();
+
+(function buildM011PageFMap() {
+  const TOTAL_SHEETS = 200;
+  const SIDES = ['a', 'b'];
+  const entries = [];
+  let pdfPage = 0;
+  for (let sheet = 1; sheet <= TOTAL_SHEETS; sheet++) {
+    for (const side of SIDES) {
+      pdfPage++;
+      const label = sheet + side;
+      entries.push({ pdf: pdfPage, label, sub: 'F ' + label, type: 'content' });
+    }
+  }
+  PAGE_MAPS['kumon-math-011-F'] = entries;
+})();
+
+(function buildM012PageGMap() {
+  const TOTAL_SHEETS = 200;
+  const SIDES = ['a', 'b'];
+  const entries = [];
+  let pdfPage = 0;
+  for (let sheet = 1; sheet <= TOTAL_SHEETS; sheet++) {
+    for (const side of SIDES) {
+      pdfPage++;
+      const label = sheet + side;
+      entries.push({ pdf: pdfPage, label, sub: 'G ' + label, type: 'content' });
+    }
+  }
+  PAGE_MAPS['kumon-math-012-G'] = entries;
 })();
 
 // PAGE_MAPS에서 검색 인덱스를 자동 생성 — PAGE_MAPS가 채워지는 순간 검색도 자동으로 살아난다.
