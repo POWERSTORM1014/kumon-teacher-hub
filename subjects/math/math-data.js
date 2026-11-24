@@ -31,6 +31,8 @@ const MATERIALS = [
   { bookId: 'kumon-math-010-E', kind: 'image', subject: '수학', stage: 'E', range: '1~200장', icon: '🔢', category: 'textbook', label: 'E단계 교재 원본+정답 (전체 200장)' },
   { bookId: 'kumon-math-011-F', kind: 'image', subject: '수학', stage: 'F', range: '1~200장', icon: '🔢', category: 'textbook', label: 'F단계 교재 원본+정답 (전체 200장)' },
   { bookId: 'kumon-math-012-G', kind: 'image', subject: '수학', stage: 'G', range: '1~200장', icon: '🔢', category: 'textbook', label: 'G단계 교재 원본+정답 (전체 200장)' },
+  { bookId: 'kumon-math-013-H', kind: 'image', subject: '수학', stage: 'H', range: '1~200장', icon: '🔢', category: 'textbook', label: 'H단계 교재 원본+정답 (전체 200장)' },
+  { bookId: 'kumon-math-014-I', kind: 'image', subject: '수학', stage: 'I', range: '1~200장', icon: '🔢', category: 'textbook', label: 'I단계 교재 원본+정답 (전체 200장)' },
 ];
 function bookIdOf(material) { return material.bookId || material.file.replace(/\.pdf$/i, ''); }
 function materialByBookId(bookId) { return MATERIALS.find(m => bookIdOf(m) === bookId) || null; }
@@ -316,6 +318,36 @@ const PAGE_MAPS = {};
     }
   }
   PAGE_MAPS['kumon-math-012-G'] = entries;
+})();
+
+(function buildM013PageHMap() {
+  const TOTAL_SHEETS = 200;
+  const SIDES = ['a', 'b'];
+  const entries = [];
+  let pdfPage = 0;
+  for (let sheet = 1; sheet <= TOTAL_SHEETS; sheet++) {
+    for (const side of SIDES) {
+      pdfPage++;
+      const label = sheet + side;
+      entries.push({ pdf: pdfPage, label, sub: 'H ' + label, type: 'content' });
+    }
+  }
+  PAGE_MAPS['kumon-math-013-H'] = entries;
+})();
+
+(function buildM014PageIMap() {
+  const TOTAL_SHEETS = 200;
+  const SIDES = ['a', 'b'];
+  const entries = [];
+  let pdfPage = 0;
+  for (let sheet = 1; sheet <= TOTAL_SHEETS; sheet++) {
+    for (const side of SIDES) {
+      pdfPage++;
+      const label = sheet + side;
+      entries.push({ pdf: pdfPage, label, sub: 'I ' + label, type: 'content' });
+    }
+  }
+  PAGE_MAPS['kumon-math-014-I'] = entries;
 })();
 
 // PAGE_MAPS에서 검색 인덱스를 자동 생성 — PAGE_MAPS가 채워지는 순간 검색도 자동으로 살아난다.
