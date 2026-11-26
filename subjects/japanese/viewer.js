@@ -260,11 +260,99 @@ async function openMyFile(id) {
   } catch (e) { hideBookLoadingOverlay(); showToast('PDF 로드 실패: ' + e.message); }
 }
 
-/* ══ 검색 (PAGE_MAPS 기반 자동 생성 인덱스) ══════════════════ */
+/* ══ 검색 (PAGE_MAPS 기반 라벨 검색 + 본문 내용 검색) ══════════════════
+   라벨 검색(SEARCH_INDEX)은 기존 그대로. 본문 검색은 _search-index/japanese.json을
+   첫 검색 시 1회만 fetch해서 캐싱해두고(_contentIndexCache), 이후 입력마다 그 캐시의
+   text와 가볍게 대조한다. 색인 파일이 없으면(아직 전사 전 단계만 있는 책) fetch가 404로
+   실패하므로 그 경우 조용히 라벨 검색만 보여준다(에러로 취급 안 함). 국어 뷰어에 먼저
+   구현된 본문 검색 기능(stopwords+NFC정규화 버그수정 반영본)을 그대로 포팅함(2026-11-27). */
+let _contentIndexCache = null;      // null=아직 시도 안 함, []=시도했지만 실패(색인 없음), [...]=로드 완료
+let _contentIndexPromise = null;
+// 전사 텍스트에 섞여 있는 "[빈칸]" 같은 메타 표시어는 실제 교재 내용이 아니라 전사 과정의
+// 표식이다 — 거의 모든 면에 등장하므로 이 단어 자체를 검색하면 의미 없이 결과가 쏟아진다.
+// 검색어가 이 표식과 정확히 일치할 때만 본문 검색을 건너뛴다(라벨 검색은 그대로 유지).
+const CONTENT_SEARCH_STOPWORDS = new Set(['빈칸', '[빈칸]', '판독 어려움', '판독어려움', '본문 없음', '본문없음', '서술형']);
+// 한글은 입력 방식에 따라 NFC/NFD로 다르게 조합될 수 있어 그대로 비교하면 눈에는 같아
+// 보이는 글자인데도 매칭이 안 어긋나는 경우가 있다 — 색인 로드 시 한 번만 NFC로
+// 정규화해 캐싱해 두면 이후 모든 검색에서 일관되게 맞는다.
+function loadContentIndex() {
+  if (_contentIndexPromise) return _contentIndexPromise;
+  _contentIndexPromise = fetch('../../_search-index/' + CURRENT_SUBJECT_ID + '.json', { cache: 'no-store' })
+    .then(res => { if (!res.ok) throw new Error('no index'); return res.json(); })
+    .then(data => {
+      const arr = Array.isArray(data) ? data : [];
+      arr.forEach(it => { if (typeof it.text === 'string') it.text = it.text.normalize('NFC'); });
+      _contentIndexCache = arr;
+      return _contentIndexCache;
+    })
+    .catch(() => { _contentIndexCache = []; return _contentIndexCache; });
+  return _contentIndexPromise;
+}
+function escapeHtml(s) {
+  return String(s).replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+}
+// 매치 위치를 기준으로 "문장" 경계(. ? ! 뒤 공백, 또는 줄바꿈)까지 앞뒤로 넓혀서 돌려준다
+// — 글자수로 뚝 자르면 문장이 중간에서 끊겨 어색해서, 완결된 문장 단위로 보여준다.
+function extractSentence(text, idx, matchLen) {
+  const before = text.slice(0, idx);
+  const after = text.slice(idx + matchLen);
+  const starts = [...before.matchAll(/[.?!](?=\s|$)|\n/g)];
+  const start = starts.length ? starts[starts.length - 1].index + starts[starts.length - 1][0].length : 0;
+  const endMatch = after.match(/[.?!](?=\s|$)|\n/);
+  const end = endMatch ? (idx + matchLen + endMatch.index + (endMatch[0] === '\n' ? 0 : 1)) : text.length;
+  const sentence = text.slice(start, end).trim();
+  if (sentence.length > 0 && sentence.length <= 140) return { text: sentence, prefix: '', suffix: '' };
+  const s = Math.max(0, idx - 15), e = idx + matchLen + 25;
+  return { text: text.slice(s, e).replace(/\n/g, ' '), prefix: s > 0 ? '…' : '', suffix: e < text.length ? '…' : '' };
+}
+// 검색어 글자 사이에 공백이 있든 없든, 검색어 자체에 입력한 공백도 전부 무시하고
+// 본문과 매칭되게 한다(검색어의 공백을 먼저 지우고, 남은 글자마다 \s*를 끼워 넣은
+// 느슨한 정규식 — "빈칸을완성"으로 쳐도 "빈칸을 완성"과 매칭됨). 해당 페이지에서
+// 처음 찾은 매치를 문장 단위로 잘라 하이라이트한다.
+function buildSnippet(text, q) {
+  const flexSrc = q.replace(/\s+/g, '').split('').map(ch => ch.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')).join('\\s*');
+  const flexReG = new RegExp(flexSrc, 'gi');
+  const m = flexReG.exec(text);
+  if (!m) return null;
+  const extracted = extractSentence(text, m.index, m[0].length);
+  const snippet = extracted.prefix + extracted.text + extracted.suffix;
+  return escapeHtml(snippet).replace(new RegExp(flexSrc, 'gi'), mm => '<mark>' + mm + '</mark>');
+}
+// 반환: {ready:false}=이 과목은 아직 본문 색인이 없음(조용히 무시), {ready:true, html}=완료.
+async function matchContentResults(q, excludeKeys) {
+  const qNorm = q.normalize('NFC');
+  if (CONTENT_SEARCH_STOPWORDS.has(qNorm)) return { ready: true, html: '' }; // 전사 메타 표시어 자체는 검색 의미 없음
+  const index = await loadContentIndex();
+  if (!index.length) return { ready: false, html: '' };
+  const flexSrc = qNorm.replace(/\s+/g, '').split('').map(ch => ch.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')).join('\\s*');
+  const existsRe = new RegExp(flexSrc, 'i');
+  const seen = new Set(excludeKeys);
+  const results = [];
+  for (const item of index) {
+    if (results.length >= 8) break;
+    const key = item.bookId + '|' + item.pdfPage;
+    if (seen.has(key)) continue;
+    if (!existsRe.test(item.text)) continue;
+    const hl = buildSnippet(item.text, qNorm);
+    if (hl === null) continue;
+    results.push({ item, hl });
+    seen.add(key);
+  }
+  if (!results.length) return { ready: true, html: '' };
+  const itemsHtml = results.map(({ item, hl }) => {
+    const m = materialByBookId(item.bookId);
+    return `<div class="ms-sr-item" onclick="jumpToIndexPage('${item.bookId}',${item.pdfPage})">
+      <div class="ms-sr-page">${m ? m.range : ''}</div>
+      <div class="ms-sr-text">${hl}<br><span style="font-size:11px;color:var(--ink-light);">${escapeHtml(item.stage)} ${escapeHtml(item.label)} · 본문 일치</span></div>
+    </div>`;
+  }).join('');
+  return { ready: true, html: '<div class="ms-sr-group-label" style="padding:6px 12px;font-size:11px;color:var(--ink-light);">📄 본문 일치</div>' + itemsHtml };
+}
 function msSearchLive(val) {
   clearTimeout(searchTimer);
   document.getElementById('ms-clear-btn').style.display = val ? '' : 'none';
   if (!val.trim()) { document.getElementById('ms-search-results').style.display = 'none'; return; }
+  loadContentIndex(); // 입력 시작하면 바로 백그라운드 로딩 시작(검색 결과 렌더는 debounce 뒤에)
   searchTimer = setTimeout(() => showSearchResults(val), 200);
 }
 function msClearSearch() {
@@ -272,22 +360,28 @@ function msClearSearch() {
   document.getElementById('ms-search-results').style.display = 'none';
   document.getElementById('ms-clear-btn').style.display = 'none';
 }
-function showSearchResults(query) {
+async function showSearchResults(query) {
   const q = query.toLowerCase().trim();
-  const results = SEARCH_INDEX.filter(item => item.keywords.includes(q)).slice(0, 8);
+  const esc = q.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  const labelResults = SEARCH_INDEX.filter(item => item.keywords.includes(q)).slice(0, 8);
   const box = document.getElementById('ms-search-results');
-  if (!results.length) { box.innerHTML = '<div class="ms-no-result">🔍 "' + query + '" 검색 결과 없음</div>'; }
-  else {
-    box.innerHTML = results.map(r => {
-      const hl = r.label.replace(new RegExp(q.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), 'gi'), m => '<mark>' + m + '</mark>');
-      const m = materialByBookId(r.bookId);
-      return `<div class="ms-sr-item" onclick="jumpToIndexPage('${r.bookId}',${r.pdfPage})">
-        <div class="ms-sr-page">${m ? m.range : ''}</div>
-        <div class="ms-sr-text">${hl}<br><span style="font-size:11px;color:var(--ink-light);">${r.sub}</span></div>
-      </div>`;
-    }).join('');
-  }
+  const labelHtml = labelResults.map(r => {
+    const hl = r.label.replace(new RegExp(esc, 'gi'), m => '<mark>' + m + '</mark>');
+    const m = materialByBookId(r.bookId);
+    return `<div class="ms-sr-item" onclick="jumpToIndexPage('${r.bookId}',${r.pdfPage})">
+      <div class="ms-sr-page">${m ? m.range : ''}</div>
+      <div class="ms-sr-text">${hl}<br><span style="font-size:11px;color:var(--ink-light);">${r.sub}</span></div>
+    </div>`;
+  }).join('');
+  box.innerHTML = labelHtml || '<div class="ms-no-result">🔍 "' + escapeHtml(query) + '" 검색 결과 없음</div>';
   box.style.display = '';
+
+  // 본문 검색은 비동기라 늦게 도착한다 — 그 사이 사용자가 입력을 바꾸면 이 결과를 버린다.
+  const { ready, html: contentHtml } = await matchContentResults(q, labelResults.map(r => r.bookId + '|' + r.pdfPage));
+  if (document.getElementById('ms-search-input').value.toLowerCase().trim() !== q) return;
+  if (!ready) return; // 이 과목은 아직 본문 색인이 없음 — 조용히 라벨 검색만 유지
+  if (contentHtml) box.innerHTML = labelHtml + contentHtml;
+  else if (!labelResults.length) box.innerHTML = '<div class="ms-no-result">🔍 "' + escapeHtml(query) + '" 검색 결과 없음</div>';
 }
 function jumpToIndexPage(bid, pdfPage) {
   document.getElementById('ms-search-results').style.display = 'none';
