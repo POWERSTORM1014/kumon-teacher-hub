@@ -14,6 +14,8 @@ const MATERIALS = [
   { bookId: 'kumon-hanja-003-3A', kind: 'image', subject: '한자', stage: '3A', range: '1~200장', icon: '字', category: 'textbook', label: '3A단계 교재 원본+정답 (전체 200장)' },
   { bookId: 'kumon-hanja-004-2A', kind: 'image', subject: '한자', stage: '2A', range: '1~200장', icon: '字', category: 'textbook', label: '2A단계 교재 원본+정답 (전체 200장)' },
   { bookId: 'kumon-hanja-005-A', kind: 'image', subject: '한자', stage: 'A', range: '1~200장', icon: '字', category: 'textbook', label: 'A단계 교재 원본+정답 (전체 200장)' },
+  { bookId: 'kumon-hanja-006-B', kind: 'image', subject: '한자', stage: 'B', range: '1~200장', icon: '字', category: 'textbook', label: 'B단계 교재 원본+정답 (전체 200장)' },
+  { bookId: 'kumon-hanja-007-C', kind: 'image', subject: '한자', stage: 'C', range: '1~200장', icon: '字', category: 'textbook', label: 'C단계 교재 원본+정답 (전체 200장)' },
 ];
 function bookIdOf(material) { return material.bookId || material.file.replace(/\.pdf$/i, ''); }
 function materialByBookId(bookId) { return MATERIALS.find(m => bookIdOf(m) === bookId) || null; }
@@ -96,6 +98,36 @@ const PAGE_MAPS = {};
     }
   }
   PAGE_MAPS['kumon-hanja-005-A'] = entries;
+})();
+
+(function buildH006PageBMap() {
+  const TOTAL_SHEETS = 200;
+  const SIDES = ['a', 'b'];
+  const entries = [];
+  let pdfPage = 0;
+  for (let sheet = 1; sheet <= TOTAL_SHEETS; sheet++) {
+    for (const side of SIDES) {
+      pdfPage++;
+      const label = sheet + side;
+      entries.push({ pdf: pdfPage, label, sub: 'B ' + label, type: 'content' });
+    }
+  }
+  PAGE_MAPS['kumon-hanja-006-B'] = entries;
+})();
+
+(function buildH007PageCMap() {
+  const TOTAL_SHEETS = 200;
+  const SIDES = ['a', 'b'];
+  const entries = [];
+  let pdfPage = 0;
+  for (let sheet = 1; sheet <= TOTAL_SHEETS; sheet++) {
+    for (const side of SIDES) {
+      pdfPage++;
+      const label = sheet + side;
+      entries.push({ pdf: pdfPage, label, sub: 'C ' + label, type: 'content' });
+    }
+  }
+  PAGE_MAPS['kumon-hanja-007-C'] = entries;
 })();
 
 // PAGE_MAPS에서 검색 인덱스를 자동 생성 — PAGE_MAPS가 채워지는 순간 검색도 자동으로 살아난다.
