@@ -8,12 +8,44 @@
 const MATERIALS = [
   { file: 'kumon-english-C-121-130.pdf', subject: '영어', stage: 'C', range: 'C121~C130', icon: '🔤', category: 'textbook', label: 'C단계 교재 (C121~C130)', archived: true }, // 초기 샘플(구방식) — 자료실 화면에서 숨김(2026-10-11)
   { file: 'kumon-english-C-131-140.pdf', subject: '영어', stage: 'C', range: 'C131~C140', icon: '🔡', category: 'textbook', label: 'C단계 교재 (C131~C140)', archived: true }, // 초기 샘플(구방식) — 자료실 화면에서 숨김(2026-10-11)
+  { bookId: 'kumon-english-004-5A', kind: 'image', subject: '영어', stage: '5A', range: '1~200장', icon: '🔤', category: 'textbook', label: '5A단계 교재 원본+정답 (전체 200장)' },
+  { bookId: 'kumon-english-005-4A', kind: 'image', subject: '영어', stage: '4A', range: '1~200장', icon: '🔤', category: 'textbook', label: '4A단계 교재 원본+정답 (전체 200장)' },
 ];
-function bookIdOf(material) { return material.file.replace(/\.pdf$/i, ''); }
+function bookIdOf(material) { return material.bookId || material.file.replace(/\.pdf$/i, ''); }
 function materialByBookId(bookId) { return MATERIALS.find(m => bookIdOf(m) === bookId) || null; }
 
 // 교재별 페이지 지도(PDF 실제 페이지 번호 → 표시 라벨) — 아직 정리된 게 없음.
 const PAGE_MAPS = {};
+
+(function buildE004Page5AMap() {
+  const TOTAL_SHEETS = 200;
+  const SIDES = ['a', 'b'];
+  const entries = [];
+  let pdfPage = 0;
+  for (let sheet = 1; sheet <= TOTAL_SHEETS; sheet++) {
+    for (const side of SIDES) {
+      pdfPage++;
+      const label = sheet + side;
+      entries.push({ pdf: pdfPage, label, sub: '5A ' + label, type: 'content' });
+    }
+  }
+  PAGE_MAPS['kumon-english-004-5A'] = entries;
+})();
+
+(function buildE005Page4AMap() {
+  const TOTAL_SHEETS = 200;
+  const SIDES = ['a', 'b'];
+  const entries = [];
+  let pdfPage = 0;
+  for (let sheet = 1; sheet <= TOTAL_SHEETS; sheet++) {
+    for (const side of SIDES) {
+      pdfPage++;
+      const label = sheet + side;
+      entries.push({ pdf: pdfPage, label, sub: '4A ' + label, type: 'content' });
+    }
+  }
+  PAGE_MAPS['kumon-english-005-4A'] = entries;
+})();
 
 // PAGE_MAPS에서 검색 인덱스를 자동 생성 — PAGE_MAPS가 채워지는 순간 검색도 자동으로 살아난다.
 function buildSearchIndex() {
