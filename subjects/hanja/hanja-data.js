@@ -24,6 +24,9 @@ const MATERIALS = [
   { bookId: 'kumon-hanja-013-F2', kind: 'image', subject: '한자', stage: 'F2', range: '1~200장', icon: '字', category: 'textbook', label: 'F2단계 교재 원본+정답 (전체 200장)' },
   { bookId: 'kumon-hanja-014-G', kind: 'image', subject: '한자', stage: 'G', range: '1~200장', icon: '字', category: 'textbook', label: 'G단계 교재 원본+정답 (전체 200장)' },
   { bookId: 'kumon-hanja-015-H', kind: 'image', subject: '한자', stage: 'H', range: '1~200장', icon: '字', category: 'textbook', label: 'H단계 교재 원본+정답 (전체 200장)' },
+  { bookId: 'kumon-hanja-016-I', kind: 'image', subject: '한자', stage: 'I', range: '1~200장', icon: '字', category: 'textbook', label: 'I단계 교재 원본+정답 (전체 200장)' },
+  { bookId: 'kumon-hanja-017-J', kind: 'image', subject: '한자', stage: 'J', range: '1~200장', icon: '字', category: 'textbook', label: 'J단계 교재 원본+정답 (전체 200장)' },
+  { bookId: 'kumon-hanja-018-K', kind: 'image', subject: '한자', stage: 'K', range: '1~200장', icon: '字', category: 'textbook', label: 'K단계 교재 원본+정답 (전체 200장)' },
 ];
 function bookIdOf(material) { return material.bookId || material.file.replace(/\.pdf$/i, ''); }
 function materialByBookId(bookId) { return MATERIALS.find(m => bookIdOf(m) === bookId) || null; }
@@ -256,6 +259,51 @@ const PAGE_MAPS = {};
     }
   }
   PAGE_MAPS['kumon-hanja-015-H'] = entries;
+})();
+
+(function buildH016PageIMap() {
+  const TOTAL_SHEETS = 200;
+  const SIDES = ['a', 'b'];
+  const entries = [];
+  let pdfPage = 0;
+  for (let sheet = 1; sheet <= TOTAL_SHEETS; sheet++) {
+    for (const side of SIDES) {
+      pdfPage++;
+      const label = sheet + side;
+      entries.push({ pdf: pdfPage, label, sub: 'I ' + label, type: 'content' });
+    }
+  }
+  PAGE_MAPS['kumon-hanja-016-I'] = entries;
+})();
+
+(function buildH017PageJMap() {
+  const TOTAL_SHEETS = 200;
+  const SIDES = ['a', 'b'];
+  const entries = [];
+  let pdfPage = 0;
+  for (let sheet = 1; sheet <= TOTAL_SHEETS; sheet++) {
+    for (const side of SIDES) {
+      pdfPage++;
+      const label = sheet + side;
+      entries.push({ pdf: pdfPage, label, sub: 'J ' + label, type: 'content' });
+    }
+  }
+  PAGE_MAPS['kumon-hanja-017-J'] = entries;
+})();
+
+(function buildH018PageKMap() {
+  const TOTAL_SHEETS = 200;
+  const SIDES = ['a', 'b'];
+  const entries = [];
+  let pdfPage = 0;
+  for (let sheet = 1; sheet <= TOTAL_SHEETS; sheet++) {
+    for (const side of SIDES) {
+      pdfPage++;
+      const label = sheet + side;
+      entries.push({ pdf: pdfPage, label, sub: 'K ' + label, type: 'content' });
+    }
+  }
+  PAGE_MAPS['kumon-hanja-018-K'] = entries;
 })();
 
 // PAGE_MAPS에서 검색 인덱스를 자동 생성 — PAGE_MAPS가 채워지는 순간 검색도 자동으로 살아난다.
